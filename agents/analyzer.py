@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-
+import datetime 
 import nibabel as nib
 import numpy as np
 from pydantic import BaseModel
@@ -303,7 +303,7 @@ class AnalyzerAgent:
             priority=Priority.NORMAL
         )
         # In real implementation, this would use proper message passing
-        print(f"Sending message: {message}")  # Placeholder for actual message sending
+        self.logger(f"Sending message: {message}")  # Placeholder for actual message sending
 
     async def _send_error(self, error_message: str) -> None:
         """Send error message to coordinator"""

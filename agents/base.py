@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Type, Union
+from typing import Any, Dict, List, Optional, Set, Type, Union, Tuple
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -66,7 +66,7 @@ class BaseAgent:
         self.logger = logging.getLogger(f"agent.{config.name}")
         
         # Set up logging
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
         if not self.logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter(
