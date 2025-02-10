@@ -1,0 +1,5 @@
+anthropic
+requests
+asyncio
+numpy
+scikit-learn
