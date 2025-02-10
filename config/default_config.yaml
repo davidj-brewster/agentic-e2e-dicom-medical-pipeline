@@ -1,0 +1,184 @@
+# Default configuration for neuroimaging pipeline
+
+# FSL Configuration
+fsl:
+  # Path to FSL installation
+  fsl_dir: /usr/local/fsl
+  # Path to standard brain template
+  standard_brain: /usr/local/fsl/data/standard/MNI152_T1_2mm_brain.nii.gz
+  # Cost function for registration (corratio, mutualinfo, normcorr, normmi, etc.)
+  registration_cost: corratio
+  # Interpolation method (trilinear, nearestneighbour, spline)
+  interpolation: trilinear
+
+# FreeSurfer Configuration
+freesurfer:
+  # Path to FreeSurfer installation
+  freesurfer_home: os.environ.get("FREESURFER_HOME")
+  # Path to subjects directory
+  subjects_dir: os.Path.join(os.environ.get("FREESURFER_HOME"), "subjects")
+  # Path to license file
+  license_file: f"{os.environ.get('FREESURFER_HOME')}/license.txt"
+
+# Anthropic API Configuration
+anthropic:
+  # API key (required)
+  api_key: ""
+  # Model to use
+  model: claude-3-sonnet-20241022
+  # Maximum tokens per request
+  max_tokens: 1000
+  # Sampling temperature (0.0-1.0)
+  temperature: 0.6
+
+# Image Processing Configuration
+processing:
+  # Apply intensity normalization
+  normalize_intensity: true
+  # Apply bias field correction
+  bias_correction: true
+  # Apply skull stripping
+  skull_strip: true
+  # Degrees of freedom for registration (6, 9, or 12)
+  registration_dof: 12
+  # Smoothing kernel FWHM in mm
+  smoothing_fwhm: 2.0
+
+# Segmentation Configuration
+segmentation:
+  # Region labels and values
+  regions_of_interest:
+    L_Thal: 10  # Left Thalamus
+    R_Thal: 49  # Right Thalamus
+    L_Caud: 11  # Left Caudate
+    R_Caud: 50  # Right Caudate
+    L_Puta: 12  # Left Putamen
+    R_Puta: 51  # Right Putamen
+    L_Pall: 13  # Left Pallidum
+    R_Pall: 52  # Right Pallidum
+    L_Hipp: 17  # Left Hippocampus
+    R_Hipp: 53  # Right Hippocampus
+    L_Amyg: 18  # Left Amygdala
+    R_Amyg: 54  # Right Amygdala
+    B_Stem: 16  # Brainstem
+    B_Cere: 7   # Cerebellum
+    B_Vent: 14  # Ventricles
+    B_Cist: 15  # Choroid Plexus
+    B_Corp: 4   # Corpus Callosum
+    B_Grey: 3   # Gray Matter
+    B_White: 2  # White Matter
+    B_CSF: 1    # CSF
+
+  # Probability threshold for segmentation (0.0-1.0)
+  probability_threshold: 0.5
+  # Minimum region size in voxels
+  min_region_size: 10
+
+# Clustering Configuration
+clustering:
+  # Z-score threshold for outliers
+  outlier_threshold: 2.5
+  # Minimum cluster size in voxels
+  min_cluster_size: 5
+  # Voxel connectivity for clustering (6, 18, or 26)
+  connectivity: 26
+
+# Visualization Configuration
+visualization:
+  # Output DPI for images
+  output_dpi: 300
+  # Spacing between slices
+  slice_spacing: 5
+  # Overlay transparency (0.0-1.0)
+  overlay_alpha: 0.35
+  # Colormap for anomalies
+  anomaly_cmap: hot
+  # Colormap for background
+  background_cmap: gray
+
+# Agent Resource Configuration
+resources:
+  # Preprocessor agent resources
+  preprocessor:
+    cpu_cores: 2
+    memory_gb: 4.0
+    gpu_memory_gb: null
+    disk_space_gb: null
+    network_bandwidth_mbps: null
+  
+  # Analyzer agent resources
+  analyzer:
+    cpu_cores: 4
+    memory_gb: 12.0
+    gpu_memory_gb: null
+    disk_space_gb: null
+    network_bandwidth_mbps: null
+  
+  # Visualizer agent resources
+  visualizer:
+    cpu_cores: 1
+    memory_gb: 4.0
+    gpu_memory_gb: null
+    disk_space_gb: null
+    network_bandwidth_mbps: null
+
+# Cache Configuration
+cache:
+  # Cache directory
+  cache_dir: cache
+  # Maximum cache size in GB
+  max_cache_size_gb: 10.0
+  # Cache TTL in seconds (default: 1 week)
+  cache_ttl: 604800
+  # Similarity threshold for cache hits (0.0-1.0)
+  similarity_threshold: 0.85
+
+# Directory Configuration
+# Working directory for temporary files
+working_dir: work
+# Output directory for results
+output_dir: output
+
+# Performance Tuning
+# These settings can be adjusted based on available system resources
+
+# For systems with limited memory (<16GB):
+# resources:
+#   preprocessor:
+#     cpu_cores: 1
+#     memory_gb: 2.0
+#   analyzer:
+#     cpu_cores: 1
+#     memory_gb: 4.0
+#   visualizer:
+#     cpu_cores: 1
+#     memory_gb: 2.0
+# processing:
+#   smoothing_fwhm: 3.0
+# cache:
+#   max_cache_size_gb: 5.0
+
+# For high-performance systems (>32GB):
+# resources:
+#   preprocessor:
+#     cpu_cores: 4
+#     memory_gb: 8.0
+#   analyzer:
+#     cpu_cores: 4
+#     memory_gb: 16.0
+#   visualizer:
+#     cpu_cores: 2
+#     memory_gb: 8.0
+# processing:
+#   smoothing_fwhm: 1.5
+# cache:
+#   max_cache_size_gb: 20.0
+
+# For systems with GPU support:
+# resources:
+#   preprocessor:
+#     gpu_memory_gb: 4.0
+#   analyzer:
+#     gpu_memory_gb: 8.0
+#   visualizer:
+#     gpu_memory_gb: 4.0
