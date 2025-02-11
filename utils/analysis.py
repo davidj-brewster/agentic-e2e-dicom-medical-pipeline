@@ -11,9 +11,14 @@ from typing import Dict, List, Optional, Tuple, Union
 import nibabel as nib
 import numpy as np
 from scipy.ndimage import label
-from sklearn.cluster import DBSCAN
-from sklearn.preprocessing import StandardScaler
 
+from utils.clustering import (
+    ClusteringResult,
+    detect_anomalies,
+    gmm_clustering,
+    kmeans_clustering,
+    prepare_data
+)
 from utils.neuroimaging import run_command, run_freesurfer_command, run_fsl_command
 
 logger = logging.getLogger(__name__)
@@ -149,8 +154,9 @@ async def analyze_intensity_clusters(
     flair_path: Path,
     mask_path: Path,
     region_name: str,
-    eps: float = 0.5,
-    min_samples: int = 5
+    method: str = "gmm",
+    features: Optional[List[str]] = None,
+    **kwargs
 ) -> Tuple[bool, Optional[str], List[ClusterMetrics]]:
     """
     Perform intensity-based clustering analysis within masked region.
@@ -159,8 +165,9 @@ async def analyze_intensity_clusters(
         flair_path: Path to FLAIR image
         mask_path: Path to binary mask
         region_name: Name of the region
-        eps: DBSCAN epsilon parameter
-        min_samples: DBSCAN minimum samples parameter
+        method: Clustering method ('kmeans', 'gmm', or 'dbscan')
+        features: List of features to use for clustering
+        **kwargs: Additional arguments for clustering method
         
     Returns:
         Tuple of (success, error_message, cluster_metrics)
@@ -173,35 +180,38 @@ async def analyze_intensity_clusters(
         flair_data = flair_img.get_fdata()
         mask_data = mask_img.get_fdata() > 0
         
-        # Extract masked intensities
-        masked_intensities = flair_data[mask_data]
-        masked_coordinates = np.array(np.where(mask_data)).T
-        
-        if len(masked_intensities) == 0:
-            return True, None, []
-        
-        # Normalize intensities
-        scaler = StandardScaler()
-        normalized_intensities = scaler.fit_transform(
-            masked_intensities.reshape(-1, 1)
+        # Prepare feature matrix
+        X, feature_names = prepare_data(
+            flair_data,
+            mask_data,
+            features or ["intensity", "local_mean", "gradient"]
         )
         
-        # Perform DBSCAN clustering
-        dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-        clusters = dbscan.fit_predict(normalized_intensities)
+        if len(X) == 0:
+            return True, None, []
         
-        # Analyze clusters
+        # Perform clustering
+        if method == "kmeans":
+            result = kmeans_clustering(X, **kwargs)
+        elif method == "gmm":
+            result = gmm_clustering(X, **kwargs)
+        else:  # dbscan
+            from utils.clustering import dbscan_clustering
+            result = dbscan_clustering(X, **kwargs)
+        
+        # Convert to cluster metrics
         cluster_metrics = []
-        unique_clusters = set(clusters)
+        unique_labels = np.unique(result.labels)
+        coordinates = np.array(np.where(mask_data)).T
         
-        for cluster_id in unique_clusters:
-            if cluster_id == -1:  # Skip noise points
+        for label in unique_labels:
+            if label == -1:  # Skip noise points for DBSCAN
                 continue
-                
+            
             # Get cluster points
-            cluster_mask = clusters == cluster_id
-            cluster_intensities = masked_intensities[cluster_mask]
-            cluster_coords = masked_coordinates[cluster_mask]
+            cluster_mask = result.labels == label
+            cluster_intensities = flair_data[mask_data][cluster_mask]
+            cluster_coords = coordinates[cluster_mask]
             
             # Calculate metrics
             mean_intensity = float(np.mean(cluster_intensities))
@@ -212,14 +222,14 @@ async def analyze_intensity_clusters(
             mins = tuple(int(x) for x in np.min(cluster_coords, axis=0))
             maxs = tuple(int(x) for x in np.max(cluster_coords, axis=0))
             
-            # Calculate outlier score based on intensity distribution
-            z_scores = np.abs(scaler.transform(
-                cluster_intensities.reshape(-1, 1)
-            ))
-            outlier_score = float(np.mean(z_scores))
+            # Use clustering scores if available
+            outlier_score = float(
+                1.0 - result.scores[cluster_mask].mean()
+                if result.scores is not None else 0.0
+            )
             
             metrics = ClusterMetrics(
-                cluster_id=int(cluster_id),
+                cluster_id=int(label),
                 size=int(len(cluster_intensities)),
                 mean_intensity=mean_intensity,
                 std_intensity=std_intensity,
@@ -245,7 +255,7 @@ def identify_anomalies(
     
     Args:
         cluster_metrics: List of cluster metrics
-        threshold: Z-score threshold for outliers
+        threshold: Outlier score threshold
         
     Returns:
         List of anomalous clusters

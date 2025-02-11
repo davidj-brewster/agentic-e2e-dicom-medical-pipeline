@@ -90,15 +90,44 @@ segmentation:
   probability_threshold: 0.5
   # Minimum region size in voxels
   min_region_size: 10
+  # Volume constraints in mm³
+  min_volume: 100.0
+  max_volume: 100000.0
 
 # Clustering Configuration
 clustering:
+  # Default clustering method (gmm, kmeans, or dbscan)
+  method: gmm
+  # Features to use for clustering
+  features:
+    - intensity
+    - local_mean
+    - local_std
+    - gradient
+    - laplacian
+  # Number of clusters for kmeans/gmm
+  n_clusters: 3
+  # DBSCAN parameters
+  eps: 0.5
+  min_cluster_size: 5
   # Z-score threshold for outliers
   outlier_threshold: 2.5
-  # Minimum cluster size in voxels
-  min_cluster_size: 5
   # Voxel connectivity for clustering (6, 18, or 26)
   connectivity: 26
+  # GMM specific options
+  gmm_options:
+    covariance_type: full
+    n_init: 3
+    max_iter: 100
+  # K-means specific options
+  kmeans_options:
+    n_init: 10
+    max_iter: 300
+  # Feature extraction options
+  feature_options:
+    local_window_size: 3
+    gradient_sigma: 1.0
+    laplacian_ksize: 3
 
 # Visualization Configuration
 visualization:

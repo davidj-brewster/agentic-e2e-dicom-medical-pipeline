@@ -4,6 +4,7 @@ Provides safe command execution and result validation.
 """
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -27,12 +28,17 @@ async def run_command(
         Tuple of (success, stdout, stderr)
     """
     try:
+        # Merge with current environment
+        cmd_env = os.environ.copy()
+        if env:
+            cmd_env.update(env)
+
         process = await asyncio.create_subprocess_exec(
             command,
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env
+            env=cmd_env
         )
         
         stdout, stderr = await process.communicate()
@@ -73,7 +79,7 @@ async def run_fsl_command(
     env = {}
     if fsl_dir:
         env["FSLDIR"] = fsl_dir
-        env["PATH"] = f"{fsl_dir}/bin:{env.get('PATH', '')}"
+        env["PATH"] = f"{fsl_dir}/bin:{os.environ.get('PATH', '')}"
     
     return await run_command(command, args, env)
 
@@ -81,7 +87,8 @@ async def run_fsl_command(
 async def run_freesurfer_command(
     command: str,
     args: List[str],
-    fs_home: Optional[str] = None
+    fs_home: Optional[str] = None,
+    subjects_dir: Optional[str] = None
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Run a FreeSurfer command with proper environment setup.
@@ -90,6 +97,7 @@ async def run_freesurfer_command(
         command: FreeSurfer command name
         args: Command arguments
         fs_home: Optional FreeSurfer home directory override
+        subjects_dir: Optional subjects directory override
         
     Returns:
         Tuple of (success, stdout, stderr)
@@ -97,9 +105,160 @@ async def run_freesurfer_command(
     env = {}
     if fs_home:
         env["FREESURFER_HOME"] = fs_home
-        env["PATH"] = f"{fs_home}/bin:{env.get('PATH', '')}"
+        env["PATH"] = f"{fs_home}/bin:{os.environ.get('PATH', '')}"
+    if subjects_dir:
+        env["SUBJECTS_DIR"] = subjects_dir
     
     return await run_command(command, args, env)
+
+
+async def run_recon_all(
+    subject_id: str,
+    t1_path: Path,
+    output_dir: Path,
+    fs_home: Optional[str] = None,
+    stages: Optional[List[str]] = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Run FreeSurfer recon-all pipeline.
+    
+    Args:
+        subject_id: Subject identifier
+        t1_path: T1 image path
+        output_dir: Output directory
+        fs_home: Optional FreeSurfer home directory
+        stages: Optional list of specific stages to run
+        
+    Returns:
+        Tuple of (success, error_message)
+    """
+    try:
+        args = [
+            "-subject", subject_id,
+            "-i", str(t1_path),
+            "-sd", str(output_dir)
+        ]
+
+        if stages:
+            for stage in stages:
+                args.extend(["-" + stage])
+        else:
+            args.append("-all")
+
+        success, stdout, stderr = await run_freesurfer_command(
+            "recon-all",
+            args,
+            fs_home=fs_home,
+            subjects_dir=str(output_dir)
+        )
+
+        if not success:
+            return False, f"recon-all failed: {stderr}"
+
+        return True, None
+
+    except Exception as e:
+        return False, f"Error running recon-all: {str(e)}"
+
+
+async def run_brain_extraction(
+    input_path: Path,
+    output_path: Path,
+    fsl_dir: Optional[str] = None,
+    fractional_intensity: float = 0.5,
+    vertical_gradient: float = 0.0
+) -> Tuple[bool, Optional[str]]:
+    """
+    Run FSL BET brain extraction.
+    
+    Args:
+        input_path: Input image path
+        output_path: Output brain mask path
+        fsl_dir: Optional FSL directory
+        fractional_intensity: Fractional intensity threshold
+        vertical_gradient: Vertical gradient in fractional intensity threshold
+        
+    Returns:
+        Tuple of (success, error_message)
+    """
+    try:
+        args = [
+            str(input_path),
+            str(output_path),
+            "-f", str(fractional_intensity),
+            "-g", str(vertical_gradient),
+            "-m"  # Generate binary mask
+        ]
+
+        success, stdout, stderr = await run_fsl_command(
+            "bet",
+            args,
+            fsl_dir=fsl_dir
+        )
+
+        if not success:
+            return False, f"Brain extraction failed: {stderr}"
+
+        return True, None
+
+    except Exception as e:
+        return False, f"Error during brain extraction: {str(e)}"
+
+
+async def run_tissue_segmentation(
+    input_path: Path,
+    output_prefix: Path,
+    fsl_dir: Optional[str] = None,
+    num_classes: int = 3,
+    bias_correction: bool = True
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Path]]]:
+    """
+    Run FSL FAST tissue segmentation.
+    
+    Args:
+        input_path: Input brain image path
+        output_prefix: Prefix for output files
+        fsl_dir: Optional FSL directory
+        num_classes: Number of tissue classes
+        bias_correction: Whether to perform bias field correction
+        
+    Returns:
+        Tuple of (success, error_message, output_paths)
+    """
+    try:
+        args = [
+            "-n", str(num_classes),
+            "-o", str(output_prefix)
+        ]
+
+        if bias_correction:
+            args.append("-B")
+
+        args.append(str(input_path))
+
+        success, stdout, stderr = await run_fsl_command(
+            "fast",
+            args,
+            fsl_dir=fsl_dir
+        )
+
+        if not success:
+            return False, f"Tissue segmentation failed: {stderr}", None
+
+        # Collect output paths
+        outputs = {
+            "bias_corrected": output_prefix.with_suffix("_restore.nii.gz"),
+            "bias_field": output_prefix.with_suffix("_bias.nii.gz"),
+            "segmentation": output_prefix.with_suffix("_seg.nii.gz")
+        }
+
+        for i in range(num_classes):
+            outputs[f"class_{i}"] = output_prefix.with_suffix(f"_pve_{i}.nii.gz")
+
+        return True, None, outputs
+
+    except Exception as e:
+        return False, f"Error during tissue segmentation: {str(e)}", None
 
 
 async def normalize_image(
@@ -230,7 +389,7 @@ async def validate_image(
         # Get image statistics
         success, stdout, stderr = await run_fsl_command(
             "fslstats",
-            [str(image_path), "-R", "-m", "-s"]
+            [str(image_path), "-R", "-m", "-s", "-S"]  # Added -S for entropy
         )
         
         if not success:
@@ -239,13 +398,17 @@ async def validate_image(
         # Parse statistics
         stats = stdout.split()
         range_min, range_max = map(float, stats[:2])
-        mean, std = map(float, stats[2:])
+        mean, std = map(float, stats[2:4])
+        entropy = float(stats[4])
         
         statistics = {
             "min": range_min,
             "max": range_max,
             "mean": mean,
-            "std": std
+            "std": std,
+            "entropy": entropy,
+            "snr": mean / std if std > 0 else 0,
+            "contrast": (range_max - range_min) / (range_max + range_min) if (range_max + range_min) > 0 else 0
         }
         
         # Validate dimensions if specified

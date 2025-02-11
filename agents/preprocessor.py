@@ -26,6 +26,10 @@ from core.workflow import ResourceRequirements, WorkflowState
 from utils.neuroimaging import (
     normalize_image,
     register_images,
+    run_brain_extraction,
+    run_freesurfer_command,
+    run_recon_all,
+    run_tissue_segmentation,
     validate_image
 )
 from .base import AgentConfig, BaseAgent
@@ -49,6 +53,9 @@ class PreprocessingMetrics(BaseModel):
     motion_parameters: Optional[Dict[str, float]] = None
     registration_cost: Optional[float] = None
     normalized_mutual_information: Optional[float] = None
+    brain_volume: Optional[float] = None
+    tissue_volumes: Optional[Dict[str, float]] = None
+    segmentation_quality: Optional[float] = None
 
 
 class PreprocessingConfig(BaseModel):
@@ -101,7 +108,7 @@ class PreprocessingAgent(BaseAgent):
                 return False
             
             # Verify FSL commands
-            fsl_cmds = ["fslmaths", "fslstats", "flirt"]
+            fsl_cmds = ["fslmaths", "fslstats", "flirt", "bet", "fast"]
             for cmd in fsl_cmds:
                 cmd_path = fsl_dir / "bin" / cmd
                 if not cmd_path.exists():
@@ -161,7 +168,7 @@ class PreprocessingAgent(BaseAgent):
             self.subject_dir = self.config.working_dir / subject_id
             
             # Create subject directories
-            for subdir in ["orig", "prep", "reg", "qc"]:
+            for subdir in ["orig", "prep", "reg", "qc", "freesurfer"]:
                 (self.subject_dir / subdir).mkdir(parents=True, exist_ok=True)
             
             # Validate inputs
@@ -169,50 +176,52 @@ class PreprocessingAgent(BaseAgent):
             if not metadata:
                 return
             
-            # Send status update
             await self._send_message(
                 create_status_update(
                     sender=self.config.name,
                     recipient="coordinator",
                     state="preprocessing",
-                    progress=0.2,
+                    progress=0.1,
                     message="Input validation complete"
                 )
             )
             
-            # Apply bias correction if configured
-            if self.preprocessing_config.processing.bias_correction:
-                for modality, meta in metadata.items():
-                    output_path = self.subject_dir / "prep" / f"{modality}_bias_corr.nii.gz"
-                    success, error = await self._apply_bias_correction(
-                        meta.path,
-                        output_path
-                    )
-                    if not success:
-                        await self._handle_error(f"Bias correction failed for {modality}: {error}")
-                        return
-                    metadata[modality] = meta._replace(path=output_path)
-            
-            # Normalize resolution
-            t1_metadata = metadata["T1"]
-            target_resolution = t1_metadata.voxel_size
-            
-            normalized_files = {}
+            # Brain extraction
+            brain_masks = {}
             for modality, meta in metadata.items():
-                output_path = self.subject_dir / "prep" / f"{modality}_norm.nii.gz"
-                
-                success, error = await normalize_image(
+                output_path = self.subject_dir / "prep" / f"{modality}_brain_mask.nii.gz"
+                success, error = await run_brain_extraction(
                     meta.path,
                     output_path,
-                    target_resolution,
-                    meta.voxel_size
+                    fsl_dir=str(self.preprocessing_config.fsl.fsl_dir),
+                    fractional_intensity=self.preprocessing_config.processing.bet_f_value
                 )
-                
                 if not success:
-                    await self._handle_error(f"Normalization failed for {modality}: {error}")
+                    await self._handle_error(f"Brain extraction failed for {modality}: {error}")
                     return
-                
-                normalized_files[modality] = output_path
+                brain_masks[modality] = output_path
+            
+            await self._send_message(
+                create_status_update(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    state="preprocessing",
+                    progress=0.3,
+                    message="Brain extraction complete"
+                )
+            )
+            
+            # Run FreeSurfer recon-all on T1
+            if "T1" in metadata:
+                success, error = await run_recon_all(
+                    subject_id,
+                    metadata["T1"].path,
+                    self.subject_dir / "freesurfer",
+                    fs_home=str(self.preprocessing_config.freesurfer.freesurfer_home)
+                )
+                if not success:
+                    await self._handle_error(f"FreeSurfer processing failed: {error}")
+                    return
             
             await self._send_message(
                 create_status_update(
@@ -220,18 +229,44 @@ class PreprocessingAgent(BaseAgent):
                     recipient="coordinator",
                     state="preprocessing",
                     progress=0.5,
-                    message="Resolution normalization complete"
+                    message="FreeSurfer processing complete"
                 )
             )
             
-            # Register T2-FLAIR to T1
-            if "T2_FLAIR" in normalized_files:
+            # Tissue segmentation
+            segmentation_outputs = {}
+            for modality, mask in brain_masks.items():
+                output_prefix = self.subject_dir / "prep" / f"{modality}_seg"
+                success, error, outputs = await run_tissue_segmentation(
+                    mask,
+                    output_prefix,
+                    fsl_dir=str(self.preprocessing_config.fsl.fsl_dir),
+                    num_classes=3,
+                    bias_correction=self.preprocessing_config.processing.bias_correction
+                )
+                if not success:
+                    await self._handle_error(f"Tissue segmentation failed for {modality}: {error}")
+                    return
+                segmentation_outputs[modality] = outputs
+            
+            await self._send_message(
+                create_status_update(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    state="preprocessing",
+                    progress=0.7,
+                    message="Tissue segmentation complete"
+                )
+            )
+            
+            # Register T2-FLAIR to T1 space
+            if "T2_FLAIR" in metadata and "T1" in metadata:
                 output_path = self.subject_dir / "reg" / "T2_FLAIR_reg.nii.gz"
                 transform_path = output_path.with_suffix(".mat")
                 
                 success, error, cost = await register_images(
-                    normalized_files["T2_FLAIR"],
-                    normalized_files["T1"],
+                    segmentation_outputs["T2_FLAIR"]["bias_corrected"],
+                    segmentation_outputs["T1"]["bias_corrected"],
                     output_path,
                     transform_path,
                     cost_function=self.preprocessing_config.fsl.registration_cost,
@@ -249,10 +284,28 @@ class PreprocessingAgent(BaseAgent):
                     await self._handle_error(f"Output validation failed: {error}")
                     return
                 
+                # Calculate tissue volumes
+                tissue_volumes = {}
+                for tissue, seg_path in segmentation_outputs["T1"].items():
+                    if tissue.startswith("class_"):
+                        success, stdout, stderr = await run_freesurfer_command(
+                            "mri_segstats",
+                            ["--seg", str(seg_path), "--sum"]
+                        )
+                        if success and stdout:
+                            try:
+                                volume = float(stdout.split("\n")[-2].split()[-1])
+                                tissue_volumes[tissue] = volume
+                            except (IndexError, ValueError):
+                                pass
+                
                 metrics = PreprocessingMetrics(
-                    snr=stats["mean"] / stats["std"] if stats["std"] > 0 else 0,
-                    contrast_to_noise=(stats["max"] - stats["min"]) / stats["std"] if stats["std"] > 0 else 0,
-                    registration_cost=cost
+                    snr=stats["snr"],
+                    contrast_to_noise=stats["contrast"],
+                    registration_cost=cost,
+                    brain_volume=sum(tissue_volumes.values()),
+                    tissue_volumes=tissue_volumes,
+                    segmentation_quality=stats["entropy"]
                 )
                 
                 # Send success message
@@ -264,8 +317,12 @@ class PreprocessingAgent(BaseAgent):
                         content={
                             "subject_id": subject_id,
                             "preprocessed_files": {
-                                "T1": str(normalized_files["T1"]),
-                                "T2_FLAIR": str(output_path)
+                                "T1": str(segmentation_outputs["T1"]["bias_corrected"]),
+                                "T1_brain": str(brain_masks["T1"]),
+                                "T1_seg": str(segmentation_outputs["T1"]["segmentation"]),
+                                "T2_FLAIR": str(output_path),
+                                "T2_FLAIR_brain": str(brain_masks["T2_FLAIR"]),
+                                "T2_FLAIR_seg": str(segmentation_outputs["T2_FLAIR"]["segmentation"])
                             },
                             "metrics": metrics.dict()
                         }
@@ -318,26 +375,6 @@ class PreprocessingAgent(BaseAgent):
             return {}
         
         return metadata
-
-    async def _apply_bias_correction(
-        self,
-        input_path: Path,
-        output_path: Path
-    ) -> Tuple[bool, Optional[str]]:
-        """Apply bias field correction using FSL FAST"""
-        try:
-            success, stdout, stderr = await run_fsl_command(
-                "fast",
-                ["-B", str(input_path), "-o", str(output_path)]
-            )
-            
-            if not success:
-                return False, f"Bias correction failed: {stderr}"
-            
-            return True, None
-            
-        except Exception as e:
-            return False, f"Error during bias correction: {str(e)}"
 
     async def _cleanup(self) -> None:
         """Cleanup agent resources"""

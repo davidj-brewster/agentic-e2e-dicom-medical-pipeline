@@ -136,7 +136,7 @@ class AnalyzerAgent(BaseAgent):
             self.subject_dir = self.config.working_dir / subject_id
             
             # Create subject directories
-            for subdir in ["seg", "masks", "clusters"]:
+            for subdir in ["seg", "masks", "clusters", "anomalies"]:
                 (self.subject_dir / subdir).mkdir(parents=True, exist_ok=True)
             
             # Send initial status
@@ -200,40 +200,49 @@ class AnalyzerAgent(BaseAgent):
                 valid, error, metrics = await validate_segmentation(
                     mask_path,
                     t1_path,
-                    min_volume=100.0,  # TODO: Configure per region
-                    max_volume=100000.0
+                    min_volume=self.analyzer_config.segmentation.min_volume,
+                    max_volume=self.analyzer_config.segmentation.max_volume
                 )
                 
                 if not valid:
                     self.logger.warning(f"Validation failed for {region_name}: {error}")
                     continue
                 
-                # Perform clustering analysis
-                success, error, clusters = await analyze_intensity_clusters(
-                    flair_path,
-                    mask_path,
-                    region_name,
-                    eps=self.analyzer_config.clustering.eps,
-                    min_samples=self.analyzer_config.clustering.min_cluster_size
-                )
-                
-                if not success:
-                    self.logger.warning(f"Clustering failed for {region_name}: {error}")
-                    continue
-                
-                # Identify anomalies
-                anomalies = identify_anomalies(
-                    clusters,
-                    threshold=self.analyzer_config.clustering.outlier_threshold
-                )
+                # Perform clustering analysis with multiple methods
+                clustering_results = {}
+                for method in ["gmm", "kmeans", "dbscan"]:
+                    success, error, clusters = await analyze_intensity_clusters(
+                        flair_path,
+                        mask_path,
+                        region_name,
+                        method=method,
+                        features=self.analyzer_config.clustering.features,
+                        n_components=self.analyzer_config.clustering.n_clusters,
+                        eps=self.analyzer_config.clustering.eps,
+                        min_samples=self.analyzer_config.clustering.min_cluster_size
+                    )
+                    
+                    if not success:
+                        self.logger.warning(f"Clustering failed for {region_name} using {method}: {error}")
+                        continue
+                    
+                    # Identify anomalies
+                    anomalies = identify_anomalies(
+                        clusters,
+                        threshold=self.analyzer_config.clustering.outlier_threshold
+                    )
+                    
+                    clustering_results[method] = {
+                        "clusters": [c.__dict__ for c in clusters],
+                        "anomalies": [a.__dict__ for a in anomalies]
+                    }
                 
                 analysis_results[region_name] = {
                     "segmentation": {
                         **segmentation_results[region_name].__dict__,
                         **metrics
                     },
-                    "clusters": [c.__dict__ for c in clusters],
-                    "anomalies": [a.__dict__ for a in anomalies]
+                    "clustering": clustering_results
                 }
                 
                 # Update progress

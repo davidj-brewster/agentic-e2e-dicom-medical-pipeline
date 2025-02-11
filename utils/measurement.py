@@ -13,7 +13,8 @@ from typing import Dict, List, Optional, Tuple, Union
 import nibabel as nib
 import numpy as np
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle, Line2D, Polygon
+from matplotlib.patches import Circle, Polygon
+from matplotlib.lines import Line2D
 
 from utils.interaction import Point
 
