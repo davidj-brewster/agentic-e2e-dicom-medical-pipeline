@@ -189,20 +189,69 @@ class SegmentationConfig(BaseModel):
 
 class ClusteringConfig(BaseModel):
     """Clustering configuration"""
-    outlier_threshold: float = Field(
-        default=2.0,
+    method: str = Field(
+        default="gmm",
+        description="Clustering method (gmm, kmeans, or dbscan)"
+    )
+    features: List[str] = Field(
+        default=["intensity", "local_mean", "local_std", "gradient", "laplacian"],
+        description="Features to use for clustering"
+    )
+    n_clusters: int = Field(
+        default=3,
+        gt=1,
+        description="Number of clusters for kmeans/gmm"
+    )
+    eps: float = Field(
+        default=0.5,
         gt=0.0,
-        description="Z-score threshold for outliers"
+        description="DBSCAN epsilon parameter"
     )
     min_cluster_size: int = Field(
         default=5,
         gt=0,
         description="Minimum cluster size"
     )
+    outlier_threshold: float = Field(
+        default=2.5,
+        gt=0.0,
+        description="Z-score threshold for outliers"
+    )
     connectivity: int = Field(
         default=26,
         description="Voxel connectivity for clustering"
     )
+    gmm_options: Dict[str, Any] = Field(
+        default={
+            "covariance_type": "full",
+            "n_init": 3,
+            "max_iter": 100
+        },
+        description="GMM specific options"
+    )
+    kmeans_options: Dict[str, Any] = Field(
+        default={
+            "n_init": 10,
+            "max_iter": 300
+        },
+        description="K-means specific options"
+    )
+    feature_options: Dict[str, Any] = Field(
+        default={
+            "local_window_size": 3,
+            "gradient_sigma": 1.0,
+            "laplacian_ksize": 3
+        },
+        description="Feature extraction options"
+    )
+
+    @validator("method")
+    def validate_method(cls, v: str) -> str:
+        """Validate clustering method"""
+        valid_methods = {"gmm", "kmeans", "dbscan"}
+        if v not in valid_methods:
+            raise ValueError(f"Invalid clustering method. Must be one of: {valid_methods}")
+        return v
 
     @validator("connectivity")
     def validate_connectivity(cls, v: int) -> int:
@@ -304,6 +353,34 @@ class ErrorHandlingConfig(BaseModel):
     )
 
 
+class CacheConfig(BaseModel):
+    """Cache configuration"""
+    enabled: bool = Field(
+        default=True,
+        description="Whether caching is enabled"
+    )
+    cache_dir: Path = Field(
+        default=Path("cache"),
+        description="Cache directory"
+    )
+    max_cache_size_gb: float = Field(
+        default=10.0,
+        gt=0.0,
+        description="Maximum cache size in GB"
+    )
+    cache_ttl: int = Field(
+        default=604800,  # 1 week in seconds
+        gt=0,
+        description="Cache TTL in seconds"
+    )
+    similarity_threshold: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Similarity threshold for cache hits"
+    )
+
+
 class PipelineConfig(BaseModel):
     """Complete pipeline configuration"""
     # Environment
@@ -320,6 +397,7 @@ class PipelineConfig(BaseModel):
     # System
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     error_handling: ErrorHandlingConfig = Field(default_factory=ErrorHandlingConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
     
     # Paths
     working_dir: Path = Field(

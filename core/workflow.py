@@ -31,6 +31,8 @@ class StepType(Enum):
     REGISTRATION = "registration"
     SEGMENTATION = "segmentation"
     ANALYSIS = "analysis"
+    CLUSTERING = "clustering"
+    ANOMALY_DETECTION = "anomaly_detection"
     VISUALIZATION = "visualization"
     VALIDATION = "validation"
     CLEANUP = "cleanup"
@@ -82,6 +84,30 @@ class StepMetrics(BaseModel):
     custom_metrics: Optional[Dict[str, Any]] = None
 
 
+class ClusteringMetrics(BaseModel):
+    """Metrics specific to clustering steps"""
+    method: str
+    n_clusters: int
+    silhouette_score: Optional[float] = None
+    calinski_harabasz_score: Optional[float] = None
+    davies_bouldin_score: Optional[float] = None
+    inertia: Optional[float] = None  # For k-means
+    bic_score: Optional[float] = None  # For GMM
+    noise_ratio: Optional[float] = None  # For DBSCAN
+
+
+class AnomalyMetrics(BaseModel):
+    """Metrics specific to anomaly detection steps"""
+    n_anomalies: int
+    anomaly_ratio: float
+    mean_anomaly_score: float
+    max_anomaly_score: float
+    detection_threshold: float
+    false_positive_rate: Optional[float] = None
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+
+
 class WorkflowStep(BaseModel):
     """Definition of a single workflow step"""
     step_id: UUID = Field(default_factory=uuid4)
@@ -104,6 +130,8 @@ class WorkflowStep(BaseModel):
     # Validation and metrics
     validations: List[StepValidation] = []
     metrics: Optional[StepMetrics] = None
+    clustering_metrics: Optional[ClusteringMetrics] = None
+    anomaly_metrics: Optional[AnomalyMetrics] = None
     
     # Input/Output
     inputs: Dict[str, Path] = {}
@@ -158,6 +186,7 @@ class WorkflowCache(BaseModel):
     # Cache metadata
     validity_period: Optional[float] = None  # seconds
     tags: List[str] = []
+    similarity_score: Optional[float] = None
 
 
 class WorkflowManager:
@@ -220,7 +249,7 @@ class WorkflowManager:
         workflow_id: UUID,
         step_id: UUID,
         new_state: WorkflowState,
-        metrics: Optional[StepMetrics] = None
+        metrics: Optional[Union[StepMetrics, ClusteringMetrics, AnomalyMetrics]] = None
     ) -> None:
         """Update the state of a workflow step"""
         workflow = self.workflows[workflow_id]
@@ -228,8 +257,12 @@ class WorkflowManager:
             for step in stage.steps:
                 if step.step_id == step_id:
                     step.state = new_state
-                    if metrics:
+                    if isinstance(metrics, StepMetrics):
                         step.metrics = metrics
+                    elif isinstance(metrics, ClusteringMetrics):
+                        step.clustering_metrics = metrics
+                    elif isinstance(metrics, AnomalyMetrics):
+                        step.anomaly_metrics = metrics
                     self.step_states[workflow_id][step_id] = new_state
                     break
 
@@ -267,7 +300,8 @@ class WorkflowManager:
         workflow_id: UUID,
         subject_id: str,
         performance_metrics: Dict[str, Any],
-        optimized_parameters: Dict[str, Any]
+        optimized_parameters: Dict[str, Any],
+        similarity_score: Optional[float] = None
     ) -> WorkflowCache:
         """Cache successful workflow for optimization"""
         workflow = self.workflows[workflow_id]
@@ -282,7 +316,8 @@ class WorkflowManager:
             subject_id=subject_id,
             successful_steps=successful_steps,
             performance_metrics=performance_metrics,
-            optimized_parameters=optimized_parameters
+            optimized_parameters=optimized_parameters,
+            similarity_score=similarity_score
         )
         
         self.cache[cache_entry.cache_id] = cache_entry
@@ -291,33 +326,36 @@ class WorkflowManager:
     def get_cached_workflow(
         self,
         subject_id: str,
+        similarity_threshold: float = 0.8,
         max_age: Optional[float] = None
     ) -> Optional[WorkflowCache]:
         """Retrieve cached workflow for similar subject"""
         if not self.cache:
             return None
             
-        # Find most recent cache entry for subject
+        # Find relevant cache entries
         relevant_caches = [
             cache for cache in self.cache.values()
-            if cache.subject_id == subject_id
+            if cache.subject_id == subject_id and
+            (cache.similarity_score or 0) >= similarity_threshold
         ]
         
         if not relevant_caches:
             return None
             
-        newest_cache = max(
-            relevant_caches,
-            key=lambda c: c.timestamp
-        )
-        
-        # Check age if specified
+        # Get most recent cache that meets age criteria
+        valid_caches = relevant_caches
         if max_age is not None:
-            age = (datetime.utcnow() - newest_cache.timestamp).total_seconds()
-            if age > max_age:
-                return None
-        
-        return newest_cache
+            now = datetime.utcnow()
+            valid_caches = [
+                cache for cache in relevant_caches
+                if (now - cache.timestamp).total_seconds() <= max_age
+            ]
+            
+        if not valid_caches:
+            return None
+            
+        return max(valid_caches, key=lambda c: c.similarity_score or 0)
 
     def get_workflow_status(self, workflow_id: UUID) -> Dict[str, Any]:
         """Get current status of workflow execution"""

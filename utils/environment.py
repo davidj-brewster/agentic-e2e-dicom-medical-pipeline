@@ -310,6 +310,75 @@ class EnvironmentValidator:
         console.print(table)
 
 
+def setup_environment(
+    freesurfer_home: Optional[str] = None,
+    fsl_dir: Optional[str] = None,
+    subjects_dir: Optional[str] = None,
+    verbose: bool = True
+) -> Tuple[bool, List[EnvironmentCheck]]:
+    """
+    Set up and validate the environment for neuroimaging pipeline.
+    
+    Args:
+        freesurfer_home: Optional path to FreeSurfer installation
+        fsl_dir: Optional path to FSL installation
+        subjects_dir: Optional path to FreeSurfer subjects directory
+        verbose: Whether to print validation report
+        
+    Returns:
+        Tuple of (success, list of environment checks)
+    """
+    # Set environment variables if provided
+    if freesurfer_home:
+        os.environ["FREESURFER_HOME"] = str(freesurfer_home)
+        if subjects_dir:
+            os.environ["SUBJECTS_DIR"] = str(subjects_dir)
+        # Source FreeSurfer setup script
+        setup_script = Path(freesurfer_home) / "SetUpFreeSurfer.sh"
+        if setup_script.exists():
+            try:
+                subprocess.run(
+                    ["bash", "-c", f"source {setup_script} && env"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+            except subprocess.CalledProcessError:
+                if verbose:
+                    console.print("[yellow]Warning: Failed to source FreeSurfer setup script[/yellow]")
+
+    if fsl_dir:
+        os.environ["FSLDIR"] = str(fsl_dir)
+        os.environ["PATH"] = f"{Path(fsl_dir)/'bin'}:{os.environ.get('PATH', '')}"
+        # Source FSL setup script
+        setup_script = Path(fsl_dir) / "etc/fslconf/fsl.sh"
+        if setup_script.exists():
+            try:
+                subprocess.run(
+                    ["bash", "-c", f"source {setup_script} && env"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+            except subprocess.CalledProcessError:
+                if verbose:
+                    console.print("[yellow]Warning: Failed to source FSL setup script[/yellow]")
+
+    # Validate environment
+    validator = EnvironmentValidator()
+    success, checks = validator.validate_environment()
+
+    if verbose:
+        validator.print_report()
+        if success:
+            console.print("\n[green]Environment setup successful![/green]")
+        else:
+            console.print("\n[red]Environment setup failed![/red]")
+            console.print("Please address the issues above before running the pipeline.")
+
+    return success, checks
+
+
 if __name__ == "__main__":
     validator = EnvironmentValidator()
     passed, checks = validator.validate_environment()

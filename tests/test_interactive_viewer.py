@@ -5,6 +5,8 @@ Tests viewer functionality and tool integration.
 import numpy as np
 import pytest
 import vtk
+import os
+import config
 
 from utils.interactive_viewer import (
     Interactive3DViewer,
@@ -205,7 +207,7 @@ class TestInteractiveViewer:
     def test_screenshot(
         self,
         viewer: Interactive3DViewer,
-        tmp_path: Path
+        tmp_path: config.TMP_DIR
     ):
         """Test screenshot capture"""
         # Save screenshot
@@ -215,7 +217,7 @@ class TestInteractiveViewer:
         
         # Test default path
         viewer.save_screenshot()
-        assert Path("screenshot.png").exists()
+        assert os.Path("screenshot.png").exists()
     
     def test_cleanup(self, viewer: Interactive3DViewer):
         """Test viewer cleanup"""

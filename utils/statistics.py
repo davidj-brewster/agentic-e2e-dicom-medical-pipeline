@@ -14,6 +14,7 @@ import numpy as np
 import seaborn as sns
 from jinja2 import Template
 from scipy import stats
+from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
