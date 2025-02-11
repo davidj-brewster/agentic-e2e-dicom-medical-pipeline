@@ -14,11 +14,11 @@ fsl:
 # FreeSurfer Configuration
 freesurfer:
   # Path to FreeSurfer installation
-  freesurfer_home: os.environ.get("FREESURFER_HOME")
+  freesurfer_home: /usr/local/freesurfer
   # Path to subjects directory
-  subjects_dir: os.Path.join(os.environ.get("FREESURFER_HOME"), "subjects")
+  subjects_dir: /usr/local/freesurfer/subjects
   # Path to license file
-  license_file: f"{os.environ.get('FREESURFER_HOME')}/license.txt"
+  license_file: /usr/local/freesurfer/license.txt
 
 # Anthropic API Configuration
 anthropic:
@@ -43,6 +43,23 @@ processing:
   registration_dof: 12
   # Smoothing kernel FWHM in mm
   smoothing_fwhm: 2.0
+  # Intensity range for normalization
+  intensity_range:
+    min: 0
+    max: 4095
+  # Bias field correction options
+  bias_correction_options:
+    convergence: 0.001
+    shrink_factor: 4
+    iterations: [50, 50, 50, 50]
+  # Registration options
+  registration_options:
+    cost: corratio
+    search_cost: corratio
+    bins: 256
+    interp: trilinear
+    dof: 12
+    schedule: default
 
 # Segmentation Configuration
 segmentation:
@@ -138,6 +155,35 @@ cache:
 working_dir: work
 # Output directory for results
 output_dir: output
+
+# Logging Configuration
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: INFO
+  # Log file path
+  file: pipeline.log
+  # Maximum log file size in MB
+  max_size_mb: 100
+  # Number of backup files to keep
+  backup_count: 5
+  # Include timestamps in logs
+  timestamp: true
+  # Include process ID in logs
+  process_id: true
+
+# Error Handling Configuration
+error_handling:
+  # Maximum number of retries for failed operations
+  max_retries: 3
+  # Delay between retries in seconds
+  retry_delay: 5
+  # Whether to continue pipeline on non-critical errors
+  continue_on_error: false
+  # Error severity levels that trigger pipeline stop
+  critical_errors:
+    - REGISTRATION_FAILED
+    - SEGMENTATION_FAILED
+    - INSUFFICIENT_RESOURCES
 
 # Performance Tuning
 # These settings can be adjusted based on available system resources

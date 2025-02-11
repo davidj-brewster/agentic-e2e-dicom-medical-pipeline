@@ -5,6 +5,7 @@ Tests FSL/FreeSurfer integration, image processing, and analysis.
 import asyncio
 from pathlib import Path
 from typing import Dict, List, Tuple
+from uuid import UUID
 
 import nibabel as nib
 import numpy as np
@@ -12,16 +13,19 @@ import pytest
 from scipy.ndimage import label
 
 from agents.analyzer import AnalyzerAgent
+from agents.base import AgentConfig
+from agents.coordinator import CoordinatorAgent
 from agents.preprocessor import PreprocessingAgent
 from agents.visualizer import VisualizerAgent
-from core.messages import MessageQueue
-from core.workflow import ResourceRequirements
+from core.messages import MessageQueue, create_command
+from core.workflow import ResourceRequirements, WorkflowManager
 from tests.data.generate_test_data import (
     create_synthetic_brain,
     create_test_subject
 )
 from tests.mocks import (
     MockCommandRunner,
+    MockMessageQueue,
     create_mock_nifti,
     setup_mock_command_runner
 )
@@ -56,9 +60,29 @@ def command_runner() -> MockCommandRunner:
 
 
 @pytest.fixture
-def message_queue() -> MessageQueue:
+def message_queue() -> MockMessageQueue:
     """Fixture for message queue"""
-    return MessageQueue()
+    return MockMessageQueue()
+
+
+@pytest.fixture
+def workflow_manager() -> WorkflowManager:
+    """Fixture for workflow manager"""
+    return WorkflowManager()
+
+
+@pytest.fixture
+def coordinator_config(work_dir: Path) -> AgentConfig:
+    """Fixture for coordinator configuration"""
+    return AgentConfig(
+        name="coordinator",
+        capabilities={"workflow_management", "agent_coordination"},
+        resource_limits=ResourceRequirements(
+            cpu_cores=2,
+            memory_gb=4.0
+        ),
+        working_dir=work_dir / "coordinator"
+    )
 
 
 class TestImageProcessing:
@@ -330,23 +354,54 @@ class TestEndToEnd:
         test_subject: Dict[str, Path],
         work_dir: Path,
         command_runner: MockCommandRunner,
-        message_queue: MessageQueue
+        message_queue: MockMessageQueue,
+        workflow_manager: WorkflowManager,
+        coordinator_config: AgentConfig
     ):
         """Test complete processing pipeline"""
-        # Initialize agents
+        # Initialize coordinator
+        coordinator = CoordinatorAgent(
+            config=coordinator_config,
+            workflow_manager=workflow_manager
+        )
+        
+        # Initialize specialized agents
         preprocessor = PreprocessingAgent(
-            coordinator_id="test_coordinator",
+            coordinator_id=coordinator_config.name,
             message_queue=message_queue
         )
         
         analyzer = AnalyzerAgent(
-            coordinator_id="test_coordinator",
+            coordinator_id=coordinator_config.name,
             message_queue=message_queue
         )
         
         visualizer = VisualizerAgent(
-            coordinator_id="test_coordinator",
+            coordinator_id=coordinator_config.name,
             message_queue=message_queue
+        )
+        
+        # Register agents with coordinator
+        await coordinator._register_agent(
+            "preprocessor",
+            ["preprocessing", "registration"]
+        )
+        await coordinator._register_agent(
+            "analyzer",
+            ["segmentation", "analysis"]
+        )
+        await coordinator._register_agent(
+            "visualizer",
+            ["visualization", "reporting"]
+        )
+        
+        # Initialize workflow
+        workflow_id = await coordinator._initialize_workflow(
+            subject_id="test_subject",
+            input_data={
+                "t1": str(test_subject["T1"]),
+                "t2_flair": str(test_subject["T2_FLAIR"])
+            }
         )
         
         # Run preprocessing
@@ -369,9 +424,9 @@ class TestEndToEnd:
             working_dir=work_dir
         )
         
-        # Get analysis results from message queue
+        # Get analysis results
         analysis_results = None
-        for message in message_queue.get_messages("test_coordinator"):
+        for message in message_queue.get_messages(coordinator_config.name):
             if "analysis_results" in message.payload:
                 analysis_results = message.payload["analysis_results"]
                 break
@@ -387,6 +442,15 @@ class TestEndToEnd:
             working_dir=work_dir
         )
         
+        # Verify workflow completion
+        status = await coordinator._get_workflow_status(workflow_id)
+        assert status["status"] == "completed"
+        
         # Verify outputs
         assert (work_dir / "test_subject" / "vis" / "reports").exists()
         assert any((work_dir / "test_subject" / "vis" / "mpr").glob("*.png"))
+        
+        # Verify workflow caching
+        cached = await workflow_manager.get_cached_workflow("test_subject")
+        assert cached is not None
+        assert cached.workflow_id == workflow_id

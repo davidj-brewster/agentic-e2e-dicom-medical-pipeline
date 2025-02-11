@@ -2,316 +2,281 @@
 Analyzer Agent for segmentation and clustering analysis.
 Handles FreeSurfer segmentation, mask generation, and anomaly detection.
 """
-import os
+import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-import datetime 
+
 import nibabel as nib
 import numpy as np
-from pydantic import BaseModel
-from scipy.ndimage import label
-from sklearn.cluster import DBSCAN
-from sklearn.preprocessing import StandardScaler
+from pydantic import BaseModel, Field
 
-from .coordinator import AgentMessage, MessageType, Priority, TaskStatus
+from core.config import (
+    ClusteringConfig,
+    ProcessingConfig,
+    SegmentationConfig
+)
+from core.messages import (
+    Message,
+    MessageType,
+    Priority,
+    create_command,
+    create_data_message,
+    create_error,
+    create_status_update
+)
+from core.workflow import ResourceRequirements, WorkflowState
+from utils.analysis import (
+    ClusterMetrics,
+    SegmentationResult,
+    analyze_intensity_clusters,
+    generate_binary_masks,
+    identify_anomalies,
+    run_first_segmentation,
+    validate_segmentation
+)
+from .base import AgentConfig, BaseAgent
 
 
-@dataclass
-class SegmentationResult:
-    """Results from FreeSurfer segmentation"""
-    region_name: str
-    mask_path: Path
-    volume: float
-    center_of_mass: Tuple[float, ...]
-    voxel_count: int
+class AnalyzerConfig(BaseModel):
+    """Analyzer agent configuration"""
+    segmentation: SegmentationConfig
+    clustering: ClusteringConfig
+    processing: ProcessingConfig
 
 
-class ClusterMetrics(BaseModel):
-    """Metrics for identified clusters"""
-    cluster_id: int
-    size: int
-    mean_intensity: float
-    std_intensity: float
-    center: Tuple[float, ...]
-    bounding_box: Tuple[Tuple[int, ...], Tuple[int, ...]]
-    outlier_score: float
-
-
-class AnalyzerAgent:
+class AnalyzerAgent(BaseAgent):
     """
     Agent responsible for image segmentation and anomaly detection.
     Handles FreeSurfer segmentation, mask generation, and clustering analysis.
     """
 
-    def __init__(self, coordinator_id: str):
-        self.agent_id = "analyzer"
-        self.coordinator_id = coordinator_id
+    def __init__(
+        self,
+        config: AgentConfig,
+        analyzer_config: AnalyzerConfig,
+        message_queue: Optional[Any] = None
+    ):
+        super().__init__(config, message_queue)
+        self.analyzer_config = analyzer_config
         self.current_subject: Optional[str] = None
-        self.working_dir: Optional[Path] = None
-        
-        # FreeSurfer region definitions
-        self.regions_of_interest = {
-            "L_Thal": 10,    # Left Thalamus
-            "R_Thal": 49,    # Right Thalamus
-            "L_Caud": 11,    # Left Caudate
-            "R_Caud": 50,    # Right Caudate
-            "L_Puta": 12,    # Left Putamen
-            "R_Puta": 51,    # Right Putamen
-            "L_Pall": 13,    # Left Pallidum
-            "R_Pall": 52,    # Right Pallidum
-            "L_Hipp": 17,    # Left Hippocampus
-            "R_Hipp": 53,    # Right Hippocampus
-            "L_Amyg": 18,    # Left Amygdala
-            "R_Amyg": 54,    # Right Amygdala
-        }
+        self.subject_dir: Optional[Path] = None
+        self.env_setup_verified = False
 
-    async def initialize_subject(self, subject_id: str, working_dir: Path) -> None:
-        """Initialize analysis for a new subject"""
-        self.current_subject = subject_id
-        self.working_dir = working_dir
+    async def _initialize(self) -> None:
+        """Initialize agent resources"""
+        await super()._initialize()
+        self.logger.info("Initializing analyzer agent")
         
-        # Create subject-specific directories
-        subject_dir = working_dir / subject_id
-        for subdir in ["seg", "masks", "clusters"]:
-            (subject_dir / subdir).mkdir(parents=True, exist_ok=True)
+        # Verify environment setup
+        if not await self._verify_environment():
+            raise RuntimeError("Environment verification failed")
 
-    async def run_first_segmentation(self, t1_path: Path) -> Dict[str, SegmentationResult]:
-        """Run FSL FIRST segmentation"""
+    async def _verify_environment(self) -> bool:
+        """Verify FSL and FreeSurfer environment setup"""
         try:
-            output_dir = self.working_dir / self.current_subject / "seg"
+            # Check FSL setup
+            fsl_dir = self.analyzer_config.processing.fsl_dir
+            if not fsl_dir.exists():
+                await self._handle_error(f"FSL directory not found: {fsl_dir}")
+                return False
             
-            # Run FIRST segmentation
-            cmd = (
-                f"run_first_all -i {t1_path} -o {output_dir}/first "
-                f"-d -v"  # debug mode and verbose output
-            )
-            os.system(cmd)  # In real implementation, use subprocess with proper error handling
+            # Check FreeSurfer setup
+            fs_home = self.analyzer_config.processing.freesurfer_home
+            if not fs_home.exists():
+                await self._handle_error(f"FreeSurfer directory not found: {fs_home}")
+                return False
             
-            # Process results
-            results = {}
-            for region_name, label_value in self.regions_of_interest.items():
-                # Load segmentation result
-                seg_path = output_dir / f"first_all_{region_name}.nii.gz"
-                if not seg_path.exists():
-                    await self._send_error(f"Segmentation failed for region: {region_name}")
-                    continue
-                
-                img = nib.load(str(seg_path))
-                data = img.get_fdata()
-                
-                # Calculate metrics
-                voxel_count = np.sum(data > 0)
-                volume = voxel_count * np.prod(img.header.get_zooms())
-                com = np.mean(np.where(data > 0), axis=1)
-                
-                results[region_name] = SegmentationResult(
-                    region_name=region_name,
-                    mask_path=seg_path,
-                    volume=float(volume),
-                    center_of_mass=tuple(float(x) for x in com),
-                    voxel_count=int(voxel_count)
+            # Verify FSL commands
+            fsl_cmds = ["first", "run_first_all", "fslmaths"]
+            for cmd in fsl_cmds:
+                cmd_path = fsl_dir / "bin" / cmd
+                if not cmd_path.exists():
+                    await self._handle_error(f"FSL command not found: {cmd}")
+                    return False
+            
+            self.env_setup_verified = True
+            return True
+            
+        except Exception as e:
+            await self._handle_error(f"Environment verification failed: {str(e)}")
+            return False
+
+    async def _handle_command(self, message: Message) -> None:
+        """Handle command messages"""
+        command = message.payload.command
+        params = message.payload.parameters
+        
+        try:
+            if command == "analyze_subject":
+                await self._analyze_subject(
+                    subject_id=params["subject_id"],
+                    t1_path=Path(params["t1_path"]),
+                    flair_path=Path(params["flair_path"])
                 )
-            
-            return results
-            
-        except Exception as e:
-            await self._send_error(f"FIRST segmentation failed: {str(e)}")
-            return {}
-
-    async def generate_binary_masks(
-        self, 
-        segmentation_results: Dict[str, SegmentationResult]
-    ) -> Dict[str, Path]:
-        """Generate binary masks for each segmented region"""
-        try:
-            masks_dir = self.working_dir / self.current_subject / "masks"
-            binary_masks = {}
-            
-            for region_name, result in segmentation_results.items():
-                mask_path = masks_dir / f"{region_name}_mask.nii.gz"
-                
-                # Create binary mask using fslmaths
-                cmd = f"fslmaths {result.mask_path} -bin {mask_path}"
-                os.system(cmd)
-                
-                binary_masks[region_name] = mask_path
-            
-            return binary_masks
-            
-        except Exception as e:
-            await self._send_error(f"Binary mask generation failed: {str(e)}")
-            return {}
-
-    async def analyze_intensity_clusters(
-        self,
-        flair_path: Path,
-        mask_path: Path,
-        region_name: str
-    ) -> List[ClusterMetrics]:
-        """Perform intensity-based clustering analysis within masked region"""
-        try:
-            # Load images
-            flair_img = nib.load(str(flair_path))
-            mask_img = nib.load(str(mask_path))
-            
-            flair_data = flair_img.get_fdata()
-            mask_data = mask_img.get_fdata() > 0
-            
-            # Extract masked intensities
-            masked_intensities = flair_data[mask_data]
-            masked_coordinates = np.array(np.where(mask_data)).T
-            
-            if len(masked_intensities) == 0:
-                return []
-            
-            # Normalize intensities
-            scaler = StandardScaler()
-            normalized_intensities = scaler.fit_transform(masked_intensities.reshape(-1, 1))
-            
-            # Perform DBSCAN clustering
-            dbscan = DBSCAN(eps=0.5, min_samples=5)
-            clusters = dbscan.fit_predict(normalized_intensities)
-            
-            # Analyze clusters
-            cluster_metrics = []
-            unique_clusters = set(clusters)
-            
-            for cluster_id in unique_clusters:
-                if cluster_id == -1:  # Skip noise points
-                    continue
-                    
-                # Get cluster points
-                cluster_mask = clusters == cluster_id
-                cluster_intensities = masked_intensities[cluster_mask]
-                cluster_coords = masked_coordinates[cluster_mask]
-                
-                # Calculate metrics
-                mean_intensity = float(np.mean(cluster_intensities))
-                std_intensity = float(np.std(cluster_intensities))
-                center = tuple(float(x) for x in np.mean(cluster_coords, axis=0))
-                
-                # Calculate bounding box
-                mins = tuple(int(x) for x in np.min(cluster_coords, axis=0))
-                maxs = tuple(int(x) for x in np.max(cluster_coords, axis=0))
-                
-                # Calculate outlier score based on intensity distribution
-                z_scores = np.abs(scaler.transform(cluster_intensities.reshape(-1, 1)))
-                outlier_score = float(np.mean(z_scores))
-                
-                metrics = ClusterMetrics(
-                    cluster_id=int(cluster_id),
-                    size=int(len(cluster_intensities)),
-                    mean_intensity=mean_intensity,
-                    std_intensity=std_intensity,
-                    center=center,
-                    bounding_box=(mins, maxs),
-                    outlier_score=outlier_score
+            else:
+                await self._handle_error(
+                    f"Unknown command: {command}",
+                    message
                 )
                 
-                cluster_metrics.append(metrics)
-            
-            return cluster_metrics
-            
         except Exception as e:
-            await self._send_error(f"Clustering analysis failed for {region_name}: {str(e)}")
-            return []
+            await self._handle_error(str(e), message)
 
-    async def identify_anomalies(
-        self,
-        cluster_metrics: List[ClusterMetrics],
-        threshold: float = 2.0
-    ) -> List[ClusterMetrics]:
-        """Identify potentially anomalous clusters"""
-        try:
-            # Filter clusters based on outlier score
-            anomalies = [
-                cluster for cluster in cluster_metrics
-                if cluster.outlier_score > threshold
-            ]
-            
-            return sorted(
-                anomalies,
-                key=lambda x: x.outlier_score,
-                reverse=True
-            )
-            
-        except Exception as e:
-            await self._send_error(f"Anomaly identification failed: {str(e)}")
-            return []
-
-    async def run_analysis(
+    async def _analyze_subject(
         self,
         subject_id: str,
         t1_path: Path,
-        flair_path: Path,
-        working_dir: Path
+        flair_path: Path
     ) -> None:
-        """Execute the complete analysis pipeline"""
+        """Execute analysis pipeline for a subject"""
         try:
-            # Initialize subject
-            await self.initialize_subject(subject_id, working_dir)
+            self.current_subject = subject_id
+            self.subject_dir = self.config.working_dir / subject_id
+            
+            # Create subject directories
+            for subdir in ["seg", "masks", "clusters"]:
+                (self.subject_dir / subdir).mkdir(parents=True, exist_ok=True)
+            
+            # Send initial status
+            await self._send_message(
+                create_status_update(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    state="analyzing",
+                    progress=0.0,
+                    message="Starting analysis"
+                )
+            )
             
             # Run segmentation
-            segmentation_results = await self.run_first_segmentation(t1_path)
-            if not segmentation_results:
+            success, error, segmentation_results = await run_first_segmentation(
+                t1_path,
+                self.subject_dir / "seg",
+                self.analyzer_config.segmentation.regions_of_interest
+            )
+            
+            if not success:
+                await self._handle_error(error or "Segmentation failed")
                 return
             
+            await self._send_message(
+                create_status_update(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    state="analyzing",
+                    progress=0.3,
+                    message="Segmentation complete"
+                )
+            )
+            
             # Generate binary masks
-            binary_masks = await self.generate_binary_masks(segmentation_results)
-            if not binary_masks:
+            success, error, binary_masks = await generate_binary_masks(
+                segmentation_results,
+                self.subject_dir / "masks"
+            )
+            
+            if not success:
+                await self._handle_error(error or "Mask generation failed")
                 return
+            
+            await self._send_message(
+                create_status_update(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    state="analyzing",
+                    progress=0.5,
+                    message="Mask generation complete"
+                )
+            )
             
             # Analyze each region
             analysis_results = {}
-            for region_name, mask_path in binary_masks.items():
-                # Perform clustering analysis
-                clusters = await self.analyze_intensity_clusters(
-                    flair_path,
+            total_regions = len(binary_masks)
+            
+            for i, (region_name, mask_path) in enumerate(binary_masks.items(), 1):
+                # Validate segmentation
+                valid, error, metrics = await validate_segmentation(
                     mask_path,
-                    region_name
+                    t1_path,
+                    min_volume=100.0,  # TODO: Configure per region
+                    max_volume=100000.0
                 )
                 
+                if not valid:
+                    self.logger.warning(f"Validation failed for {region_name}: {error}")
+                    continue
+                
+                # Perform clustering analysis
+                success, error, clusters = await analyze_intensity_clusters(
+                    flair_path,
+                    mask_path,
+                    region_name,
+                    eps=self.analyzer_config.clustering.eps,
+                    min_samples=self.analyzer_config.clustering.min_cluster_size
+                )
+                
+                if not success:
+                    self.logger.warning(f"Clustering failed for {region_name}: {error}")
+                    continue
+                
                 # Identify anomalies
-                anomalies = await self.identify_anomalies(clusters)
+                anomalies = identify_anomalies(
+                    clusters,
+                    threshold=self.analyzer_config.clustering.outlier_threshold
+                )
                 
                 analysis_results[region_name] = {
-                    "segmentation": segmentation_results[region_name],
-                    "clusters": [c.dict() for c in clusters],
-                    "anomalies": [a.dict() for a in anomalies]
+                    "segmentation": {
+                        **segmentation_results[region_name].__dict__,
+                        **metrics
+                    },
+                    "clusters": [c.__dict__ for c in clusters],
+                    "anomalies": [a.__dict__ for a in anomalies]
                 }
+                
+                # Update progress
+                progress = 0.5 + (0.5 * i / total_regions)
+                await self._send_message(
+                    create_status_update(
+                        sender=self.config.name,
+                        recipient="coordinator",
+                        state="analyzing",
+                        progress=progress,
+                        message=f"Analyzed region {i}/{total_regions}"
+                    )
+                )
             
-            # Send success message with results
+            # Send results
             await self._send_message(
-                MessageType.RESULT,
-                {
-                    "subject_id": subject_id,
-                    "analysis_results": analysis_results
-                }
+                create_data_message(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    data_type="analysis_results",
+                    content={
+                        "subject_id": subject_id,
+                        "analysis_results": analysis_results,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                )
+            )
+            
+            await self._send_message(
+                create_status_update(
+                    sender=self.config.name,
+                    recipient="coordinator",
+                    state="completed",
+                    progress=1.0,
+                    message="Analysis complete"
+                )
             )
             
         except Exception as e:
-            await self._send_error(f"Analysis pipeline failed: {str(e)}")
+            await self._handle_error(f"Analysis failed: {str(e)}")
 
-    async def _send_message(self, message_type: MessageType, payload: Dict[str, Any]) -> None:
-        """Send message to coordinator"""
-        message = AgentMessage(
-            sender=self.agent_id,
-            recipient=self.coordinator_id,
-            message_type=message_type,
-            payload=payload,
-            priority=Priority.NORMAL
-        )
-        # In real implementation, this would use proper message passing
-        self.logger(f"Sending message: {message}")  # Placeholder for actual message sending
-
-    async def _send_error(self, error_message: str) -> None:
-        """Send error message to coordinator"""
-        await self._send_message(
-            MessageType.ERROR,
-            {
-                "error": error_message,
-                "subject_id": self.current_subject,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
+    async def _cleanup(self) -> None:
+        """Cleanup agent resources"""
+        await super()._cleanup()
+        self.logger.info("Cleaning up analyzer agent")
+        # Additional cleanup if needed

@@ -102,4 +102,7 @@ testpaths = [
 asyncio_mode = "auto"
 
 [project.scripts]
-neuroimaging-pipeline = "main:main"
+neuroimaging-pipeline = "main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agents", "cli", "core", "utils"]

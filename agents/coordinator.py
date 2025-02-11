@@ -2,228 +2,344 @@
 Coordinator Agent for managing the neuroimaging analysis workflow.
 Handles task orchestration, inter-agent communication, and workflow state management.
 """
-from dataclasses import dataclass
+import asyncio
 from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
+from core.messages import (
+    Message,
+    MessageType,
+    Priority,
+    create_command,
+    create_error,
+    create_status_update
+)
+from core.workflow import (
+    ResourceRequirements,
+    WorkflowCache,
+    WorkflowDefinition,
+    WorkflowManager,
+    WorkflowState,
+    WorkflowStep
+)
+from .base import BaseAgent, AgentConfig
 
 
-class TaskStatus(Enum):
-    """Workflow task status states"""
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-class MessageType(Enum):
-    """Types of inter-agent messages"""
-    COMMAND = "command"
-    STATUS_UPDATE = "status_update"
-    ERROR = "error"
-    DATA = "data"
-    RESULT = "result"
-
-
-class Priority(Enum):
-    """Message priority levels"""
-    LOW = 0
-    NORMAL = 1
-    HIGH = 2
-    CRITICAL = 3
-
-
-class AgentMessage(BaseModel):
-    """Standard message format for inter-agent communication"""
-    message_id: UUID = uuid4()
-    sender: str
-    recipient: str
-    message_type: MessageType
-    payload: Dict[str, Any]
-    timestamp: datetime = datetime.utcnow()
-    priority: Priority = Priority.NORMAL
-
-
-@dataclass
-class WorkflowStep:
-    """Represents a single step in the processing workflow"""
-    step_id: str
-    tool: str
-    parameters: Dict[str, Any]
-    status: TaskStatus = TaskStatus.PENDING
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    error: Optional[str] = None
-
-
-class WorkflowCache(BaseModel):
-    """Cache structure for storing successful workflow patterns"""
-    workflow_id: UUID
-    subject_id: str
-    pipeline_steps: List[Dict[str, Any]]
-    performance_metrics: Dict[str, Any]
-    timestamp: datetime = datetime.utcnow()
-
-
-class CoordinatorAgent:
+class CoordinatorAgent(BaseAgent):
     """
     Coordinator Agent responsible for managing the neuroimaging analysis workflow.
     Handles task distribution, monitoring, and workflow optimization.
     """
 
-    def __init__(self):
-        self.workflow_steps: List[WorkflowStep] = []
-        self.workflow_cache: Dict[UUID, WorkflowCache] = {}
-        self.active_agents: Dict[str, Dict[str, Any]] = {}
-        self.message_queue: List[AgentMessage] = []
+    def __init__(
+        self,
+        config: AgentConfig,
+        workflow_manager: Optional[WorkflowManager] = None
+    ):
+        super().__init__(config)
+        self.workflow_manager = workflow_manager or WorkflowManager()
+        self.active_workflows: Dict[UUID, WorkflowDefinition] = {}
+        self.agent_capabilities: Dict[str, Set[str]] = {}
 
-    async def initialize_workflow(self, subject_id: str, input_data: Dict[str, Any]) -> UUID:
+    async def _initialize(self) -> None:
+        """Initialize coordinator resources"""
+        await super()._initialize()
+        self.logger.info("Initializing coordinator agent")
+        # Additional initialization if needed
+
+    async def _cleanup(self) -> None:
+        """Cleanup coordinator resources"""
+        await super()._cleanup()
+        self.logger.info("Cleaning up coordinator agent")
+        # Additional cleanup if needed
+
+    async def _handle_command(self, message: Message) -> None:
+        """Handle command messages"""
+        command = message.payload.command
+        params = message.payload.parameters
+
+        try:
+            if command == "initialize_workflow":
+                workflow_id = await self._initialize_workflow(
+                    params["subject_id"],
+                    params.get("input_data", {})
+                )
+                await self._send_message(
+                    create_status_update(
+                        sender=self.config.name,
+                        recipient=message.sender,
+                        state="workflow_initialized",
+                        details={"workflow_id": str(workflow_id)}
+                    )
+                )
+
+            elif command == "register_agent":
+                await self._register_agent(
+                    params["agent_id"],
+                    params["capabilities"]
+                )
+                await self._send_message(
+                    create_status_update(
+                        sender=self.config.name,
+                        recipient=message.sender,
+                        state="agent_registered"
+                    )
+                )
+
+            else:
+                await self._handle_error(
+                    f"Unknown command: {command}",
+                    message,
+                )
+
+        except Exception as e:
+            await self._handle_error(str(e), message)
+
+    async def _handle_data(self, message: Message) -> None:
+        """Handle data messages"""
+        data_type = message.payload.data_type
+        content = message.payload.content
+
+        try:
+            if data_type == "workflow_result":
+                workflow_id = UUID(content["workflow_id"])
+                if workflow_id in self.active_workflows:
+                    await self._process_workflow_result(workflow_id, content)
+            else:
+                self.logger.warning(f"Unhandled data type: {data_type}")
+
+        except Exception as e:
+            await self._handle_error(str(e), message)
+
+    async def _handle_query(self, message: Message) -> None:
+        """Handle query messages"""
+        query_type = message.payload.query_type
+        params = message.payload.parameters
+
+        try:
+            if query_type == "workflow_status":
+                workflow_id = UUID(params["workflow_id"])
+                status = await self._get_workflow_status(workflow_id)
+                await self._send_message(
+                    create_status_update(
+                        sender=self.config.name,
+                        recipient=message.sender,
+                        state="query_response",
+                        details=status
+                    )
+                )
+            else:
+                self.logger.warning(f"Unhandled query type: {query_type}")
+
+        except Exception as e:
+            await self._handle_error(str(e), message)
+
+    async def _initialize_workflow(
+        self,
+        subject_id: str,
+        input_data: Dict[str, Any]
+    ) -> UUID:
         """Initialize a new workflow for a subject"""
-        workflow_id = uuid4()
+        # Check cache for similar workflow
+        cached = await self.workflow_manager.get_cached_workflow(subject_id)
         
-        # Define the standard workflow steps
-        self.workflow_steps = [
+        # Create new workflow
+        workflow = self.workflow_manager.create_workflow(
+            name=f"Workflow-{subject_id}",
+            description=f"Neuroimaging analysis for subject {subject_id}"
+        )
+        
+        # Define workflow stages
+        preprocessing = self.workflow_manager.add_stage(
+            workflow.workflow_id,
+            "Preprocessing",
+            "Image preprocessing and quality control"
+        )
+        
+        analysis = self.workflow_manager.add_stage(
+            workflow.workflow_id,
+            "Analysis",
+            "Segmentation and clustering analysis"
+        )
+        
+        visualization = self.workflow_manager.add_stage(
+            workflow.workflow_id,
+            "Visualization",
+            "Result visualization and report generation"
+        )
+        
+        # Add steps with optimized parameters from cache if available
+        if cached:
+            self.logger.info(f"Using cached workflow parameters for {subject_id}")
+            params = cached.optimized_parameters
+        else:
+            params = {}
+        
+        # Add workflow steps
+        steps = [
             WorkflowStep(
-                step_id="input_validation",
-                tool="data_validator",
-                parameters={"subject_id": subject_id, "input_data": input_data}
+                name="Input Validation",
+                step_type="validation",
+                command="validate_input",
+                parameters={
+                    "subject_id": subject_id,
+                    "input_data": input_data,
+                    **params.get("validation", {})
+                },
+                resources=ResourceRequirements(
+                    cpu_cores=1,
+                    memory_gb=4
+                )
             ),
             WorkflowStep(
-                step_id="preprocessing",
-                tool="fsl_preprocessor",
-                parameters={"subject_id": subject_id}
+                name="FSL Preprocessing",
+                step_type="preprocessing",
+                command="preprocess_images",
+                parameters={
+                    "subject_id": subject_id,
+                    **params.get("preprocessing", {})
+                },
+                resources=ResourceRequirements(
+                    cpu_cores=4,
+                    memory_gb=8
+                )
             ),
             WorkflowStep(
-                step_id="registration",
-                tool="fsl_registration",
-                parameters={"subject_id": subject_id}
+                name="FreeSurfer Segmentation",
+                step_type="segmentation",
+                command="segment_brain",
+                parameters={
+                    "subject_id": subject_id,
+                    **params.get("segmentation", {})
+                },
+                resources=ResourceRequirements(
+                    cpu_cores=4,
+                    memory_gb=16
+                )
             ),
             WorkflowStep(
-                step_id="segmentation",
-                tool="freesurfer_segmentation",
-                parameters={"subject_id": subject_id}
+                name="Clustering Analysis",
+                step_type="analysis",
+                command="cluster_regions",
+                parameters={
+                    "subject_id": subject_id,
+                    **params.get("clustering", {})
+                },
+                resources=ResourceRequirements(
+                    cpu_cores=2,
+                    memory_gb=8
+                )
             ),
             WorkflowStep(
-                step_id="clustering",
-                tool="intensity_clustering",
-                parameters={"subject_id": subject_id}
-            ),
-            WorkflowStep(
-                step_id="visualization",
-                tool="freeview_renderer",
-                parameters={"subject_id": subject_id}
+                name="Visualization",
+                step_type="visualization",
+                command="generate_visualizations",
+                parameters={
+                    "subject_id": subject_id,
+                    **params.get("visualization", {})
+                },
+                resources=ResourceRequirements(
+                    cpu_cores=2,
+                    memory_gb=8,
+                    gpu_memory_gb=2
+                )
             )
         ]
         
-        return workflow_id
-
-    async def register_agent(self, agent_id: str, capabilities: List[str]) -> None:
-        """Register a new agent with the coordinator"""
-        self.active_agents[agent_id] = {
-            "capabilities": capabilities,
-            "status": "idle",
-            "last_heartbeat": datetime.utcnow()
-        }
-
-    async def send_message(self, message: AgentMessage) -> None:
-        """Send a message to another agent"""
-        self.message_queue.append(message)
-        # In a real implementation, this would use proper message queuing
-        await self._process_message_queue()
-
-    async def _process_message_queue(self) -> None:
-        """Process pending messages in the queue"""
-        while self.message_queue:
-            message = self.message_queue.pop(0)
-            # Handle message based on type
-            if message.message_type == MessageType.COMMAND:
-                await self._handle_command(message)
-            elif message.message_type == MessageType.STATUS_UPDATE:
-                await self._handle_status_update(message)
-            elif message.message_type == MessageType.ERROR:
-                await self._handle_error(message)
-
-    async def _handle_command(self, message: AgentMessage) -> None:
-        """Handle incoming command messages"""
-        if message.recipient not in self.active_agents:
-            await self.send_message(
-                AgentMessage(
-                    sender="coordinator",
-                    recipient=message.sender,
-                    message_type=MessageType.ERROR,
-                    payload={"error": f"Agent {message.recipient} not found"}
-                )
+        # Add steps to appropriate stages
+        for step in steps[:2]:
+            self.workflow_manager.add_step(
+                workflow.workflow_id,
+                preprocessing.stage_id,
+                step
             )
-            return
         
-        # Update agent status and forward command
-        self.active_agents[message.recipient]["status"] = "busy"
-        # Implementation would forward command to actual agent
-
-    async def _handle_status_update(self, message: AgentMessage) -> None:
-        """Handle status update messages from agents"""
-        agent_id = message.sender
-        if agent_id in self.active_agents:
-            self.active_agents[agent_id]["last_heartbeat"] = datetime.utcnow()
-            self.active_agents[agent_id]["status"] = message.payload.get("status", "idle")
-
-    async def _handle_error(self, message: AgentMessage) -> None:
-        """Handle error messages from agents"""
-        # Log error and update workflow step status
-        step_id = message.payload.get("step_id")
-        error_message = message.payload.get("error")
+        for step in steps[2:4]:
+            self.workflow_manager.add_step(
+                workflow.workflow_id,
+                analysis.stage_id,
+                step
+            )
         
-        for step in self.workflow_steps:
-            if step.step_id == step_id:
-                step.status = TaskStatus.FAILED
-                step.error = error_message
-                break
-
-    async def cache_workflow(self, workflow_id: UUID, metrics: Dict[str, Any]) -> None:
-        """Cache successful workflow patterns for optimization"""
-        if not self.workflow_steps:
-            return
-
-        cache_entry = WorkflowCache(
-            workflow_id=workflow_id,
-            subject_id=self.workflow_steps[0].parameters["subject_id"],
-            pipeline_steps=[{
-                "step_id": step.step_id,
-                "tool": step.tool,
-                "parameters": step.parameters,
-                "success_metrics": metrics.get(step.step_id, {})
-            } for step in self.workflow_steps if step.status == TaskStatus.COMPLETED],
-            performance_metrics=metrics
+        self.workflow_manager.add_step(
+            workflow.workflow_id,
+            visualization.stage_id,
+            steps[-1]
         )
         
-        self.workflow_cache[workflow_id] = cache_entry
+        self.active_workflows[workflow.workflow_id] = workflow
+        return workflow.workflow_id
 
-    async def get_cached_workflow(self, subject_id: str) -> Optional[WorkflowCache]:
-        """Retrieve cached workflow pattern for similar subjects"""
-        # In a real implementation, this would include similarity matching logic
-        for cache in self.workflow_cache.values():
-            if cache.subject_id == subject_id:
-                return cache
-        return None
+    async def _register_agent(
+        self,
+        agent_id: str,
+        capabilities: List[str]
+    ) -> None:
+        """Register a new agent with the coordinator"""
+        self.agent_capabilities[agent_id] = set(capabilities)
+        self.logger.info(f"Registered agent {agent_id} with capabilities: {capabilities}")
 
-    async def monitor_workflow(self, workflow_id: UUID) -> Dict[str, Any]:
-        """Monitor and report workflow progress"""
-        total_steps = len(self.workflow_steps)
-        completed_steps = sum(1 for step in self.workflow_steps 
-                            if step.status == TaskStatus.COMPLETED)
-        failed_steps = sum(1 for step in self.workflow_steps 
-                          if step.status == TaskStatus.FAILED)
+    async def _process_workflow_result(
+        self,
+        workflow_id: UUID,
+        result: Dict[str, Any]
+    ) -> None:
+        """Process workflow step results"""
+        try:
+            # Update workflow state
+            step_id = UUID(result["step_id"])
+            new_state = WorkflowState(result["state"])
+            metrics = result.get("metrics")
+            
+            self.workflow_manager.update_step_state(
+                workflow_id,
+                step_id,
+                new_state,
+                metrics
+            )
+            
+            # Check if workflow is complete
+            status = await self._get_workflow_status(workflow_id)
+            if status["status"] == "completed":
+                # Cache successful workflow
+                await self.workflow_manager.cache_workflow(
+                    workflow_id,
+                    result["subject_id"],
+                    status["performance_metrics"],
+                    result["optimized_parameters"]
+                )
+                
+            elif status["status"] == "failed":
+                self.logger.error(f"Workflow {workflow_id} failed")
+                # Implement failure recovery logic
+                
+        except Exception as e:
+            self.logger.error(f"Error processing workflow result: {e}")
+            raise
+
+    async def _get_workflow_status(
+        self,
+        workflow_id: UUID
+    ) -> Dict[str, Any]:
+        """Get current status of workflow execution"""
+        return self.workflow_manager.get_workflow_status(workflow_id)
+
+    async def _send_heartbeat(self) -> None:
+        """Send coordinator heartbeat"""
+        await super()._send_heartbeat()
+        # Add coordinator-specific status information
+        active_workflows = len(self.active_workflows)
+        registered_agents = len(self.agent_capabilities)
         
-        return {
-            "workflow_id": workflow_id,
-            "total_steps": total_steps,
-            "completed_steps": completed_steps,
-            "failed_steps": failed_steps,
-            "progress": (completed_steps / total_steps) * 100 if total_steps > 0 else 0,
-            "status": "failed" if failed_steps > 0 else 
-                     "completed" if completed_steps == total_steps else 
-                     "in_progress"
-        }
+        await self._send_message(
+            create_status_update(
+                sender=self.config.name,
+                recipient="system",
+                state="active",
+                details={
+                    "active_workflows": active_workflows,
+                    "registered_agents": registered_agents
+                }
+            )
+        )
