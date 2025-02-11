@@ -24,6 +24,248 @@ This system implements an AI agent-based approach to neuroimaging analysis using
 - Implement `mri_segment` for tissue classification
 - Utilize `freeview` for visualization
 
+## Implementation Guide
+
+This guide outlines the optimal sequence for implementing the neuroimaging analysis system using Roo Code assistant, with clear validation points and minimal rework.
+
+### Phase 1: Environment and Core Setup
+
+1. **Environment Validation Script**
+   ```python
+   # Prompt: "Create a script that validates FreeSurfer and FSL installations, checking for required binaries and environment variables"
+   ```
+   - Validation: Script should return detailed status of environment setup
+   - Files: `utils/environment.py`
+   - Test: Run script on system with/without proper setup
+
+2. **Test Data Preparation**
+   ```python
+   # Prompt: "Create a script to generate or download minimal test data for development"
+   ```
+   - Validation: Script should provide sample T1/T2-FLAIR data
+   - Files: `tests/data/generate_test_data.py`
+   - Test: Verify generated data format and structure
+
+### Phase 2: Core Data Structures
+
+1. **Message Protocol**
+   ```python
+   # Prompt: "Implement the base message protocol for inter-agent communication with pydantic models"
+   ```
+   - Validation: Unit tests for message serialization/deserialization
+   - Files: `core/messages.py`
+   - Test: Verify message validation and conversion
+
+2. **Workflow Definitions**
+   ```python
+   # Prompt: "Create workflow step definitions and state management classes"
+   ```
+   - Validation: Unit tests for workflow state transitions
+   - Files: `core/workflow.py`
+   - Test: Verify workflow step sequencing
+
+### Phase 3: Agent Framework
+
+1. **Base Agent**
+   ```python
+   # Prompt: "Implement the base agent class with core messaging and state management"
+   ```
+   - Validation: Unit tests for basic agent functionality
+   - Files: `agents/base.py`
+   - Test: Verify agent lifecycle and messaging
+
+2. **Mock Testing Framework**
+   ```python
+   # Prompt: "Create a mock framework for testing agent interactions"
+   ```
+   - Validation: Example tests using mock framework
+   - Files: `tests/mocks.py`
+   - Test: Verify agent interaction simulation
+
+### Phase 4: Individual Agents
+
+1. **Coordinator Agent**
+   ```python
+   # Prompt: "Implement the coordinator agent with workflow management"
+   ```
+   - Validation: Tests for workflow coordination
+   - Files: `agents/coordinator.py`
+   - Test: Verify workflow initialization and monitoring
+
+2. **Preprocessor Agent**
+   ```python
+   # Prompt: "Create the preprocessor agent with FSL integration"
+   ```
+   - Validation: Tests with mock FSL commands
+   - Files: `agents/preprocessor.py`
+   - Test: Verify preprocessing workflow
+
+3. **Analyzer Agent**
+   ```python
+   # Prompt: "Implement the analyzer agent with segmentation and clustering"
+   ```
+   - Validation: Tests with sample segmentation data
+   - Files: `agents/analyzer.py`
+   - Test: Verify analysis pipeline
+
+4. **Visualizer Agent**
+   ```python
+   # Prompt: "Create the visualizer agent with multi-planar and 3D visualization"
+   ```
+   - Validation: Tests generating sample visualizations
+   - Files: `agents/visualizer.py`
+   - Test: Verify visualization outputs
+
+### Phase 5: Pipeline Integration
+
+1. **Pipeline Orchestrator**
+   ```python
+   # Prompt: "Implement the main pipeline orchestrator with agent coordination"
+   ```
+   - Validation: Integration tests with mock agents
+   - Files: `core/pipeline.py`
+   - Test: Verify end-to-end workflow
+
+2. **Workflow Cache**
+   ```python
+   # Prompt: "Create the workflow caching system with Anthropic API integration"
+   ```
+   - Validation: Tests for cache storage/retrieval
+   - Files: `core/cache.py`
+   - Test: Verify workflow optimization
+
+### Phase 6: CLI and Configuration
+
+1. **Configuration System**
+   ```python
+   # Prompt: "Implement the configuration management system"
+   ```
+   - Validation: Tests for config loading/validation
+   - Files: `core/config.py`
+   - Test: Verify configuration handling
+
+2. **CLI Interface**
+   ```python
+   # Prompt: "Create the command-line interface with rich progress display"
+   ```
+   - Validation: CLI usage examples
+   - Files: `main.py`
+   - Test: Verify command-line operation
+
+### Phase 7: Documentation and Examples
+
+1. **API Documentation**
+   ```python
+   # Prompt: "Generate comprehensive API documentation with examples"
+   ```
+   - Validation: Documentation build
+   - Files: `docs/`
+   - Test: Verify documentation completeness
+
+2. **Usage Examples**
+   ```python
+   # Prompt: "Create example scripts for common use cases"
+   ```
+   - Validation: Example execution
+   - Files: `examples/`
+   - Test: Verify example functionality
+
+## Validation Strategy
+
+### Unit Testing
+- Each component should have comprehensive unit tests
+- Use pytest fixtures for test data and mocks
+- Implement test coverage reporting
+
+### Integration Testing
+- Test agent interactions with mock framework
+- Verify workflow transitions
+- Test FSL/FreeSurfer integration
+
+### System Testing
+- End-to-end tests with sample data
+- Performance benchmarking
+- Error handling verification
+
+## Development Tips
+
+1. **Independent Development**
+   - Each component can be developed and tested independently
+   - Use mock objects for dependencies
+   - Implement clear interfaces between components
+
+2. **Incremental Testing**
+   - Write tests before implementation
+   - Verify each component in isolation
+   - Integration tests for component combinations
+
+3. **Documentation**
+   - Document design decisions
+   - Include validation criteria
+   - Provide usage examples
+
+4. **Error Handling**
+   - Implement comprehensive error handling
+   - Include recovery mechanisms
+   - Log important events
+
+## Implementation Sequence
+
+1. Start with environment validation
+2. Implement core data structures
+3. Create base agent framework
+4. Develop individual agents
+5. Integrate pipeline components
+6. Add CLI and configuration
+7. Complete documentation
+
+This sequence minimizes rework by:
+- Establishing core components first
+- Using mock objects for testing
+- Implementing clear interfaces
+- Validating each step independently
+
+## Verification Points
+
+Each phase should be verified by:
+1. Unit tests passing
+2. Integration tests successful
+3. Documentation complete
+4. Example usage working
+5. Error handling verified
+
+## Optimization Opportunities
+
+1. **Parallel Development**
+   - Multiple components can be developed simultaneously
+   - Independent testing possible
+   - Clear interfaces enable integration
+
+2. **Incremental Deployment**
+   - System can be tested with partial functionality
+   - Add features progressively
+   - Validate each addition
+
+3. **Performance Tuning**
+   - Profile each component
+   - Optimize critical paths
+   - Cache frequently used data
+
+## Next Steps
+
+1. Begin with environment validation script
+2. Implement core message protocol
+3. Create base agent framework
+4. Develop agents incrementally
+5. Integrate components
+6. Add CLI and documentation
+
+This approach ensures:
+- Minimal rework required
+- Independent component validation
+- Clear progress tracking
+- Maintainable codebase
+
 
 ### Agent Communication Protocol
 ```python
@@ -797,7 +1039,6 @@ d) Result Management:
    - Archives
 
 Let me update the implementation guide with the command integration design:
-</thinking>
 
 ## Validation Strategy
 
