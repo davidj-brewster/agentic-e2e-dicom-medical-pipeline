@@ -14,12 +14,12 @@ from cli.commands import COMMANDS
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True)]
 )
-logger = logging.getLogger("neuroimaging")
+logger = logging.getLogger("cli")
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -85,6 +85,7 @@ async def main(args: Optional[List[str]] = None) -> int:
         logger.error(f"Operation failed: {e}")
         if parsed_args.log_level == "DEBUG":
             logger.exception(e)
+            logger.error(f"{e.traceback()}")
         return 1
 
 

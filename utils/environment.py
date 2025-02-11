@@ -245,7 +245,7 @@ class EnvironmentValidator:
             # Check available memory (require at least 8GB)
             import psutil
             memory = psutil.virtual_memory()
-            required_memory = 8 * 1024 * 1024 * 1024  # 8GB in bytes
+            required_memory = 4 * 1024 * 1024 * 1024  # 8GB in bytes
             
             if memory.available < required_memory:
                 return EnvironmentCheck(

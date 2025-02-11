@@ -155,7 +155,7 @@ resources:
   # Analyzer agent resources
   analyzer:
     cpu_cores: 4
-    memory_gb: 12.0
+    memory_gb: 4.0
     gpu_memory_gb: null
     disk_space_gb: null
     network_bandwidth_mbps: null
@@ -237,13 +237,13 @@ error_handling:
 # resources:
 #   preprocessor:
 #     cpu_cores: 4
-#     memory_gb: 8.0
+#     memory_gb: 4.0
 #   analyzer:
 #     cpu_cores: 4
-#     memory_gb: 16.0
+#     memory_gb: 4.0
 #   visualizer:
 #     cpu_cores: 2
-#     memory_gb: 8.0
+#     memory_gb: 3.0
 # processing:
 #   smoothing_fwhm: 1.5
 # cache:
@@ -257,3 +257,4 @@ error_handling:
 #     gpu_memory_gb: 8.0
 #   visualizer:
 #     gpu_memory_gb: 4.0
+

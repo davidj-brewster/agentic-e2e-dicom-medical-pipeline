@@ -28,6 +28,7 @@ from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg,
     NavigationToolbar2Tk
 )
+from matplotlib.figure import Figure
 
 from utils.visualization import (
     ColorMap,
@@ -75,7 +76,7 @@ from utils.overlay import (
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True)]
@@ -91,7 +92,7 @@ class Argument:
     help: str
     type: type = str
     default: Any = None
-    required: bool = False
+    #required: bool = False
     choices: Optional[List[str]] = None
 
 
@@ -111,11 +112,12 @@ class Command(ABC):
                 "help": arg.help,
                 "type": arg.type,
                 "default": arg.default,
-                "required": arg.required
+                #"required": arg.required,
+                #"action": arg.type if arg.type == bool else None
             }
             if arg.choices:
                 kwargs["choices"] = arg.choices
-            parser.add_argument(arg.name, **kwargs)
+            parser.add_argument(arg.name, **kwargs,)
 
     @abstractmethod
     async def execute(self, args: Namespace) -> None:
@@ -131,7 +133,8 @@ class SetupEnvironmentCommand(Command):
         Argument(
             "--freesurfer-home",
             help="FreeSurfer installation directory",
-            type=Path
+            type=Path,
+            
         ),
         Argument(
             "--fsl-dir",
@@ -199,7 +202,7 @@ class ProcessSubjectCommand(Command):
             "subject_dir",
             help="Subject directory path",
             type=Path,
-            required=True
+            #required=False
         ),
         Argument(
             "--output-dir",
@@ -281,7 +284,7 @@ class ProcessDatasetCommand(Command):
             "dataset_dir",
             help="Dataset directory path",
             type=Path,
-            required=True
+            #required=True
         ),
         Argument(
             "--output-dir",
@@ -395,7 +398,7 @@ class ShowWorkflowCommand(Command):
         Argument(
             "workflow_id",
             help="Workflow ID",
-            required=True
+            #required=True
         )
     ]
 
@@ -453,7 +456,7 @@ class CancelWorkflowCommand(Command):
         Argument(
             "workflow_id",
             help="Workflow ID",
-            required=True
+            #required=True
         )
     ]
 
@@ -541,7 +544,7 @@ class ShowCacheCommand(Command):
         Argument(
             "subject_id",
             help="Subject ID",
-            required=True
+            #required=True
         )
     ]
 
@@ -609,7 +612,7 @@ class ClearCacheCommand(Command):
         Argument(
             "--force",
             help="Force removal without confirmation",
-            action="store_true"
+            #action="store_true"
         )
     ]
 
@@ -674,7 +677,7 @@ class OptimizeCacheCommand(Command):
         Argument(
             "--dry-run",
             help="Show what would be done without making changes",
-            action="store_true"
+            default=False
         )
     ]
 
@@ -728,7 +731,7 @@ class ViewResultsCommand(Command):
         Argument(
             "subject_id",
             help="Subject ID",
-            required=True
+            #required=True
         ),
         Argument(
             "--view-type",
@@ -905,7 +908,7 @@ class ExportReportCommand(Command):
         Argument(
             "subject_id",
             help="Subject ID",
-            required=True
+            #uired=True
         ),
         Argument(
             "--format",
@@ -1008,7 +1011,7 @@ class View3DCommand(Command):
         Argument(
             "subject_id",
             help="Subject ID",
-            required=True
+            #required=True
         ),
         Argument(
             "--mode",
@@ -1246,10 +1249,10 @@ class CompareSubjectsCommand(Command):
         Argument(
             "subject_ids",
             help="Subject IDs (space-separated)",
-            nargs="+",
-            required=True
+            #nargs="+",
+            #required=True
         ),
-        Argument(
+        Argument(   
             "--mode",
             help="Comparison mode",
             choices=[m.name.lower() for m in OverlayMode],
@@ -1270,7 +1273,7 @@ class CompareSubjectsCommand(Command):
         Argument(
             "--interactive",
             help="Enable interactive mode",
-            action="store_true"
+            #action="store_true"
         ),
         Argument(
             "--output",
