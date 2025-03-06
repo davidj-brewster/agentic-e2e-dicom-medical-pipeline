@@ -1,6 +1,6 @@
-# Agentic FreeSurfer/FSL Segmentation and Clustering System
+#  Multi-Agentic adaptive FreeSurfer/FSL Registration, ROI-detection, Segmentation, Clustering, Visualisation and Anomaly detection System for DiCOM and NiFTi images and sequences
 
-CRITICAL: DO NOT CHANGE THE ORIGINAL DESIGN ARCHITECTURE INSTRUCTIONS OR DETAILS IN THIS README.md. They may be of use to future agentic coding assistants in full. Include additional requirements or implementation progress as appropriate though.
+***** CRITICAL NOTE TO ROO-CODE/AI AGENT AMENDING CODE IN THIS PROJECT: DO NOT CHANGE THE ORIGINAL DESIGN ARCHITECTURE INSTRUCTIONS OR DETAILS IN THIS README.md. They may be of use to future agentic coding assistants in full. Include additional requirements or implementation progress as appropriate though. *****
 
 ## System Overview
 
