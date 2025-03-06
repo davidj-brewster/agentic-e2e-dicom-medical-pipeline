@@ -266,8 +266,13 @@ class ProcessSubjectCommand(Command):
                 
                 if "visualization_paths" in result:
                     logger.info("\nVisualization outputs:")
+                    vis_len = 0
                     for vis_type, path in result["visualization_paths"].items():
+                        vis_len+=1
                         logger.info(f"- {vis_type}: {path}")
+                    if vis_len == 0:
+                        logger.error("No visualization outputs")
+                        raise Exception("No visualization outputs despite successful visualisation output")
             else:
                 logger.error(f"\nProcessing failed: {result.get('error', 'Unknown error')}")
             

@@ -24,8 +24,21 @@ import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 from nilearn import plotting
 import vtk
-from vtk.util import numpy_support
-
+from vtkmodules.util import numpy_support
+from vtkmodules.vtkCommonColor import vtkNamedColors
+from vtkmodules.vtkCommonCore import vtkPoints, vtkUnsignedCharArray
+from vtkmodules.vtkCommonDataModel import vtkImageData, vtkPolyData
+from vtkmodules.vtkFiltersCore import vtkContourFilter
+from vtkmodules.vtkFiltersGeneral import vtkImageMarchingCubes
+from vtkmodules.vtkFiltersSources import vtkPlaneSource
+from vtkmodules.vtkRenderingCore import (
+    vtkActor,
+    vtkCamera,
+    vtkPolyDataMapper,
+    vtkRenderWindow,
+    vtkRenderWindowInteractor,
+    vtkRenderer
+)
 logger = logging.getLogger(__name__)
 
 

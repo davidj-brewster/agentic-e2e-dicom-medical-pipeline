@@ -1,8 +1,12 @@
 # Agentic FreeSurfer/FSL Segmentation and Clustering System
 
+CRITICAL: DO NOT CHANGE THE ORIGINAL DESIGN ARCHITECTURE INSTRUCTIONS OR DETAILS IN THIS README.md. They may be of use to future agentic coding assistants in full. Include additional requirements or implementation progress as appropriate though.
+
 ## System Overview
 
 This system implements an AI agent-based approach to neuroimaging analysis using FreeSurfer and FSL tools, focusing on automated processing, segmentation, and anomaly detection in brain imaging data.
+
+You as an AI are a top-level software architect and radioneurologist, as well as a principal level software engineer in Python.
 
 ### Current Features
 - Statistical analysis with multiple test types (t-test, ANOVA, etc.)
@@ -19,7 +23,7 @@ This system implements an AI agent-based approach to neuroimaging analysis using
 - Workflow optimization
 - Pipeline automation
 
-### Planned Features
+### Planned Features (original)
 - Workflow caching and optimization
 - Automated anomaly detection
 - Advanced clustering analysis
