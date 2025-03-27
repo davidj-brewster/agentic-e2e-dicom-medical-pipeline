@@ -1,12 +1,19 @@
 #  Multi-Agentic adaptive FreeSurfer/FSL Registration, ROI-detection, Segmentation, Clustering, Visualisation and Anomaly detection System for DiCOM and NiFTi images and sequences
 
-***** CRITICAL NOTE TO ROO-CODE/AI AGENT AMENDING CODE IN THIS PROJECT: DO NOT CHANGE THE ORIGINAL DESIGN ARCHITECTURE INSTRUCTIONS OR DETAILS IN THIS README.md. They may be of use to future agentic coding assistants in full. Include additional requirements or implementation progress as appropriate though. *****
+An evaluation project for how far I can push Roo-Code / Claude / Gemini / self-hosted LMs to build a fully working advanced pipeline.. involving creating agentic workflows :D 
+
+
+***** 
+CRITICAL NOTE TO ROO-CODE/AI AGENTS WORKING IN THIS PROJECT: 
+* DO NOT CHANGE THE ORIGINAL DESIGN ARCHITECTURE INSTRUCTIONS OR DETAILS IN THIS README.md: they may be of use to future agentic coding assistants in full. Append additional requirements or implementation progress as appropriate.
+* You are a top-level software architect and neuroradiologist, as well as a principal level software engineer in Python an ML consulting on the design and implementation of this project. Prioritise code-quality, documentation and modularity as well as checking for regressions and downstream impacts of code changes
+* Preference light-touch minimal change over radical redesigns of architeture or implementation
+*****
 
 ## System Overview
 
 This system implements an AI agent-based approach to neuroimaging analysis using FreeSurfer and FSL tools, focusing on automated processing, segmentation, and anomaly detection in brain imaging data.
 
-You as an AI are a top-level software architect and radioneurologist, as well as a principal level software engineer in Python.
 
 ### Current Features
 - Statistical analysis with multiple test types (t-test, ANOVA, etc.)
