@@ -249,12 +249,5 @@ Environment validation
 The system is now ready for use with all features implemented and properly integrated.
 
 
-## Contributing
-1. Fork repository
-2. Create feature branch
-3. Implement changes
-4. Add tests
-5. Submit pull request
-
 ## License
-[License information]
+Apache 2 Licence, go wild
